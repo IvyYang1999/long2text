@@ -1,16 +1,15 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-
-const API_URL = "";
+import { splitImageInBrowser } from "@/lib/client-splitter";
 
 type Scene = "general" | "chat" | "meeting" | "article";
 type Lang = "ch" | "en";
-type Status = "idle" | "uploading" | "processing" | "done" | "error";
+type Status = "idle" | "splitting" | "processing" | "done" | "error";
 
 interface OCRResult {
-  preview: string;
   full_text: string;
+  preview: string;
   total_chars: number;
   total_lines: number;
   segments_processed: number;
@@ -26,6 +25,7 @@ export default function Home() {
   const [isPaid, setIsPaid] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -34,38 +34,63 @@ export default function Home() {
         return;
       }
 
-      // Show preview
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
-      setStatus("uploading");
+      setStatus("splitting");
       setError("");
       setResult(null);
       setIsPaid(false);
+      setProgress({ current: 0, total: 0 });
 
       try {
+        // Step 1: Split image in browser
+        const splitInfo = await splitImageInBrowser(file);
+        const { segments } = splitInfo;
+        setProgress({ current: 0, total: segments.length });
         setStatus("processing");
 
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("lang", lang);
-        formData.append("scene", scene);
+        // Step 2: Upload each segment and collect OCR results
+        const segmentTexts: string[] = [];
+        for (let i = 0; i < segments.length; i++) {
+          const seg = segments[i];
+          const formData = new FormData();
+          formData.append(
+            "file",
+            seg.blob,
+            `segment-${seg.index}.png`,
+          );
 
-        const res = await fetch(`${API_URL}/api/ocr`, {
-          method: "POST",
-          body: formData,
+          const res = await fetch("/api/ocr", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            throw new Error(`Segment ${i + 1} failed: ${res.status}`);
+          }
+
+          const data = await res.json();
+          if (!data.success) {
+            throw new Error(data.detail || `Segment ${i + 1} failed`);
+          }
+
+          segmentTexts.push(data.text);
+          setProgress({ current: i + 1, total: segments.length });
+        }
+
+        // Step 3: Merge segment texts (simple dedup for overlapping regions)
+        const fullText = mergeSegmentTexts(segmentTexts);
+        const lines = fullText.split("\n");
+        const preview = lines.slice(0, Math.max(5, Math.ceil(lines.length * 0.2))).join("\n");
+
+        setResult({
+          full_text: fullText,
+          preview,
+          total_chars: fullText.length,
+          total_lines: lines.length,
+          segments_processed: segments.length,
         });
-
-        if (!res.ok) {
-          throw new Error(`Server error: ${res.status}`);
-        }
-
-        const data = await res.json();
-        if (data.success) {
-          setResult(data.result);
-          setStatus("done");
-        } else {
-          throw new Error(data.detail || "Processing failed");
-        }
+        setStatus("done");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unknown error");
         setStatus("error");
@@ -73,6 +98,38 @@ export default function Home() {
     },
     [lang, scene],
   );
+
+  /** Merge overlapping segment texts by deduplicating trailing/leading lines */
+  function mergeSegmentTexts(texts: string[]): string {
+    if (texts.length === 0) return "";
+    if (texts.length === 1) return texts[0].trim();
+
+    let merged = texts[0].trim();
+    for (let i = 1; i < texts.length; i++) {
+      const current = texts[i].trim();
+      if (!current) continue;
+
+      const prevLines = merged.split("\n");
+      const currLines = current.split("\n");
+
+      // Try to find overlap: check if last N lines of prev match first N lines of curr
+      let bestOverlap = 0;
+      const maxCheck = Math.min(prevLines.length, currLines.length, 8);
+      for (let n = 1; n <= maxCheck; n++) {
+        const prevTail = prevLines.slice(-n).map((l) => l.trim()).join("\n");
+        const currHead = currLines.slice(0, n).map((l) => l.trim()).join("\n");
+        if (prevTail === currHead) {
+          bestOverlap = n;
+        }
+      }
+
+      const newLines = currLines.slice(bestOverlap);
+      if (newLines.length > 0) {
+        merged += "\n" + newLines.join("\n");
+      }
+    }
+    return merged;
+  }
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -228,18 +285,40 @@ export default function Home() {
                 <p className="mt-4 text-sm text-red-500">{error}</p>
               )}
             </>
-          ) : status === "processing" || status === "uploading" ? (
+          ) : status === "splitting" ? (
+            <div className="flex flex-col items-center">
+              <div className="mb-4 h-12 w-12 animate-spin rounded-full border-4 border-indigo-200 border-t-indigo-600" />
+              <p className="text-lg font-medium text-slate-700">
+                {lang === "ch" ? "正在切分图片..." : "Splitting image..."}
+              </p>
+              <p className="text-sm text-slate-400">
+                {lang === "ch"
+                  ? "在浏览器中智能切分长图"
+                  : "Smart splitting in your browser"}
+              </p>
+            </div>
+          ) : status === "processing" ? (
             <div className="flex flex-col items-center">
               <div className="mb-4 h-12 w-12 animate-spin rounded-full border-4 border-indigo-200 border-t-indigo-600" />
               <p className="text-lg font-medium text-slate-700">
                 {lang === "ch"
-                  ? "正在识别中，请稍候..."
-                  : "Processing your image..."}
+                  ? `正在识别中 (${progress.current}/${progress.total})...`
+                  : `Recognizing (${progress.current}/${progress.total})...`}
               </p>
-              <p className="text-sm text-slate-400">
+              {progress.total > 0 && (
+                <div className="mt-3 h-2 w-64 overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className="h-full rounded-full bg-indigo-600 transition-all duration-300"
+                    style={{
+                      width: `${(progress.current / progress.total) * 100}%`,
+                    }}
+                  />
+                </div>
+              )}
+              <p className="mt-2 text-sm text-slate-400">
                 {lang === "ch"
-                  ? "长图会被智能切分，逐段识别后合并"
-                  : "Splitting, recognizing each segment, then merging"}
+                  ? "逐段识别后智能合并"
+                  : "Recognizing each segment, then merging"}
               </p>
             </div>
           ) : null}
