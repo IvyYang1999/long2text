@@ -57,7 +57,7 @@ export default function Home() {
           formData.append(
             "file",
             seg.blob,
-            `segment-${seg.index}.png`,
+            `segment-${seg.index}.jpg`,
           );
 
           const res = await fetch("/api/ocr", {

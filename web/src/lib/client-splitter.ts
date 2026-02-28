@@ -20,11 +20,11 @@ export interface SplitInfo {
 }
 
 function calculateSegmentHeight(width: number): number {
-  // Shorter segments for wider images to keep file size under 4.5MB
-  if (width <= 500) return 1500;
-  if (width <= 800) return 1200;
-  if (width <= 1200) return 1000;
-  return 800;
+  // Shorter segments for wider images to keep each JPEG under 4MB
+  if (width <= 500) return 2000;
+  if (width <= 800) return 1500;
+  if (width <= 1200) return 800;
+  return 600;
 }
 
 export async function splitImageInBrowser(
@@ -59,8 +59,8 @@ export async function splitImageInBrowser(
               segments: [{ index: 0, yStart: 0, yEnd: height, blob }],
             });
           },
-          "image/png",
-          1.0,
+          "image/jpeg",
+          0.92,
         );
         return;
       }
@@ -88,8 +88,8 @@ export async function splitImageInBrowser(
               if (!blob) return rej(new Error("Failed to crop segment"));
               res({ index: idx, yStart, yEnd, blob });
             },
-            "image/png",
-            1.0,
+            "image/jpeg",
+            0.92,
           );
         });
       };
