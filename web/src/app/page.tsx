@@ -1,9 +1,17 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, Suspense } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 import { splitImageInBrowser } from "@/lib/client-splitter";
+
+export default function Page() {
+  return (
+    <Suspense>
+      <Home />
+    </Suspense>
+  );
+}
 
 type Scene = "general" | "chat" | "meeting" | "article";
 type Lang = "ch" | "en";
@@ -20,7 +28,7 @@ interface OCRResult {
   isDownloaded: boolean;
 }
 
-export default function Home() {
+function Home() {
   const { data: session, status: authStatus } = useSession();
   const searchParams = useSearchParams();
 
