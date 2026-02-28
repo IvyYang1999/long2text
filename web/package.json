@@ -9,12 +9,15 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@playwright/test": "^1.58.2",
     "clsx": "^2.1.1",
     "lucide-react": "^0.575.0",
     "next": "16.1.6",
     "next-intl": "^4.8.3",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "sharp": "^0.34.5",
+    "tencentcloud-sdk-nodejs-ocr": "^4.1.188"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
