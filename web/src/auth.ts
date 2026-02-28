@@ -5,9 +5,14 @@ import { db } from "@/lib/db";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: DrizzleAdapter(db),
-  providers: [Google],
+  providers: [
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID || process.env.AUTH_GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || process.env.AUTH_GOOGLE_CLIENT_SECRET,
+    }),
+  ],
   pages: {
-    signIn: "/", // redirect back to home for sign-in
+    signIn: "/",
   },
   callbacks: {
     session({ session, user }) {
@@ -17,4 +22,5 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return session;
     },
   },
+  debug: process.env.NODE_ENV === "development",
 });
