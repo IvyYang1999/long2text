@@ -108,6 +108,10 @@ export async function ocrImage(imageBuffer: Buffer): Promise<OCRBlock[]> {
   const data = await resp.json();
 
   if (data.Response?.Error) {
+    // "No text found" is not a real error — just return empty
+    if (data.Response.Error.Code === "FailedOperation.ImageNoText") {
+      return [];
+    }
     throw new Error(
       `Tencent OCR error: ${data.Response.Error.Code} - ${data.Response.Error.Message}`,
     );
