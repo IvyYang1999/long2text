@@ -45,26 +45,61 @@ function Home() {
 
   const result = results[activeIndex] || null;
 
-  // Handle Stripe success callback
+  // Handle Stripe success callback - reload result from DB
   useEffect(() => {
     const paidResultId = searchParams.get("paid");
     const sessionId = searchParams.get("session_id");
-    if (paidResultId && sessionId) {
-      // Verify payment and mark as paid
-      fetch(`/api/verify-payment?ocrResultId=${paidResultId}`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.paid) {
-            setResults((prev) =>
-              prev.map((r) =>
-                r.id === paidResultId ? { ...r, isPaid: true } : r,
-              ),
-            );
-          }
-        });
-      // Clean URL
+    if (!paidResultId || !sessionId) return;
+
+    (async () => {
+      try {
+        // Webhook may not have fired yet - poll a few times
+        let paid = false;
+        for (let i = 0; i < 5; i++) {
+          const verifyRes = await fetch(`/api/verify-payment?ocrResultId=${paidResultId}`);
+          const verifyData = await verifyRes.json();
+          if (verifyData.paid) { paid = true; break; }
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+
+        // Fetch the full result from DB
+        const res = await fetch("/api/ocr-results");
+        const allResults = await res.json();
+        const dbResult = allResults.find((r: { id: string }) => r.id === paidResultId);
+
+        if (dbResult) {
+          const fullText = dbResult.fullText || dbResult.preview || "";
+          const lines = fullText.split("\n");
+          const newResult: OCRResult = {
+            id: dbResult.id,
+            full_text: fullText,
+            preview: dbResult.preview || "",
+            total_chars: dbResult.totalChars || fullText.length,
+            total_lines: lines.length,
+            segments_processed: dbResult.segmentsProcessed || 0,
+            isPaid: paid || (dbResult.totalChars <= 500),
+            isDownloaded: false,
+          };
+
+          setResults((prev) => {
+            const exists = prev.some((r) => r.id === paidResultId);
+            if (exists) {
+              return prev.map((r) => r.id === paidResultId ? newResult : r);
+            }
+            return [...prev, newResult];
+          });
+          setActiveIndex((prev) => {
+            // Point to the paid result
+            const idx = results.findIndex((r) => r.id === paidResultId);
+            return idx >= 0 ? idx : 0;
+          });
+          setStatus("done");
+        }
+      } catch (err) {
+        console.error("Failed to restore paid result:", err);
+      }
       window.history.replaceState({}, "", "/");
-    }
+    })();
   }, [searchParams]);
 
   // beforeunload warning for undownloaded results
