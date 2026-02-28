@@ -19,6 +19,8 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const imageBuffer = Buffer.from(arrayBuffer);
 
+    console.log(`[OCR] segment size: ${imageBuffer.length} bytes (${(imageBuffer.length / 1024).toFixed(1)} KB), base64 size: ${(imageBuffer.length * 4 / 3 / 1024).toFixed(1)} KB, type: ${file.type}, name: ${file.name}`);
+
     const blocks = await ocrImage(imageBuffer);
     const text = blocks.map((b) => b.text).join("\n");
 
@@ -29,11 +31,12 @@ export async function POST(request: NextRequest) {
       chars: text.length,
     });
   } catch (err) {
-    console.error("OCR error:", err);
+    const errMsg = err instanceof Error ? err.message : "Processing failed";
+    console.error(`[OCR] FAILED - segment size: ${file.size} bytes, error: ${errMsg}`);
     return NextResponse.json(
       {
         success: false,
-        detail: err instanceof Error ? err.message : "Processing failed",
+        detail: errMsg,
       },
       { status: 500 },
     );

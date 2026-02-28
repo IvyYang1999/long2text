@@ -104,13 +104,14 @@ function Home() {
         for (let i = 0; i < segments.length; i++) {
           let lastError = "";
           let success = false;
+          const seg = segments[i];
+          const blobKB = (seg.blob.size / 1024).toFixed(1);
 
           for (let attempt = 0; attempt < 3; attempt++) {
             if (attempt > 0) {
               await new Promise((r) => setTimeout(r, 2000 * attempt));
             }
             try {
-              const seg = segments[i];
               const formData = new FormData();
               formData.append(
                 "file",
@@ -125,7 +126,7 @@ function Home() {
 
               if (!res.ok) {
                 const errBody = await res.json().catch(() => ({}));
-                lastError = errBody.detail || `Segment ${i + 1} failed: ${res.status}`;
+                lastError = `Seg ${i + 1} (${blobKB}KB): ${errBody.detail || res.status}`;
                 continue;
               }
 
