@@ -20,11 +20,11 @@ export interface SplitInfo {
 }
 
 function calculateSegmentHeight(width: number): number {
-  // Shorter segments for wider images to keep each JPEG under 4MB
-  if (width <= 500) return 2000;
-  if (width <= 800) return 1500;
-  if (width <= 1200) return 800;
-  return 600;
+  // Small segments to keep OCR fast (under Vercel 10s timeout)
+  if (width <= 500) return 1000;
+  if (width <= 800) return 700;
+  if (width <= 1200) return 500;
+  return 400;
 }
 
 export async function splitImageInBrowser(
