@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { useSession, signIn, signOut } from "next-auth/react";
+import { useSearchParams } from "next/navigation";
 import { splitImageInBrowser } from "@/lib/client-splitter";
 
 type Scene = "general" | "chat" | "meeting" | "article";
@@ -8,24 +10,66 @@ type Lang = "ch" | "en";
 type Status = "idle" | "splitting" | "processing" | "done" | "error";
 
 interface OCRResult {
+  id?: string; // database id (if saved)
   full_text: string;
   preview: string;
   total_chars: number;
   total_lines: number;
   segments_processed: number;
+  isPaid: boolean;
+  isDownloaded: boolean;
 }
 
 export default function Home() {
+  const { data: session, status: authStatus } = useSession();
+  const searchParams = useSearchParams();
+
   const [status, setStatus] = useState<Status>("idle");
   const [scene, setScene] = useState<Scene>("general");
   const [lang, setLang] = useState<Lang>("ch");
-  const [result, setResult] = useState<OCRResult | null>(null);
+  const [results, setResults] = useState<OCRResult[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [error, setError] = useState("");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [isPaid, setIsPaid] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+
+  const result = results[activeIndex] || null;
+
+  // Handle Stripe success callback
+  useEffect(() => {
+    const paidResultId = searchParams.get("paid");
+    const sessionId = searchParams.get("session_id");
+    if (paidResultId && sessionId) {
+      // Verify payment and mark as paid
+      fetch(`/api/verify-payment?ocrResultId=${paidResultId}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.paid) {
+            setResults((prev) =>
+              prev.map((r) =>
+                r.id === paidResultId ? { ...r, isPaid: true } : r,
+              ),
+            );
+          }
+        });
+      // Clean URL
+      window.history.replaceState({}, "", "/");
+    }
+  }, [searchParams]);
+
+  // beforeunload warning for undownloaded results
+  useEffect(() => {
+    const hasUndownloaded = results.some((r) => !r.isDownloaded && r.isPaid);
+    if (!hasUndownloaded) return;
+
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [results]);
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -38,8 +82,6 @@ export default function Home() {
       setPreviewUrl(url);
       setStatus("splitting");
       setError("");
-      setResult(null);
-      setIsPaid(false);
       setProgress({ current: 0, total: 0 });
 
       try {
@@ -78,28 +120,57 @@ export default function Home() {
           setProgress({ current: i + 1, total: segments.length });
         }
 
-        // Step 3: Merge segment texts (simple dedup for overlapping regions)
+        // Step 3: Merge segment texts
         const fullText = mergeSegmentTexts(segmentTexts);
         const lines = fullText.split("\n");
-        const preview = lines.slice(0, Math.max(5, Math.ceil(lines.length * 0.2))).join("\n");
+        const preview = lines
+          .slice(0, Math.max(5, Math.ceil(lines.length * 0.2)))
+          .join("\n");
 
-        setResult({
+        const newResult: OCRResult = {
           full_text: fullText,
           preview,
           total_chars: fullText.length,
           total_lines: lines.length,
           segments_processed: segments.length,
-        });
+          isPaid: fullText.length <= 500, // free if short
+          isDownloaded: false,
+        };
+
+        // Save to database if logged in
+        if (session?.user) {
+          try {
+            const saveRes = await fetch("/api/ocr-results", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                fullText,
+                preview,
+                totalChars: fullText.length,
+                segmentsProcessed: segments.length,
+              }),
+            });
+            const saveData = await saveRes.json();
+            if (saveData.id) {
+              newResult.id = saveData.id;
+            }
+          } catch {
+            // Non-critical: continue even if save fails
+            console.error("Failed to save OCR result to database");
+          }
+        }
+
+        setResults((prev) => [...prev, newResult]);
+        setActiveIndex((prev) => (prev === 0 && results.length === 0 ? 0 : results.length));
         setStatus("done");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unknown error");
         setStatus("error");
       }
     },
-    [lang, scene],
+    [lang, scene, session, results.length],
   );
 
-  /** Merge overlapping segment texts by deduplicating trailing/leading lines */
   function mergeSegmentTexts(texts: string[]): string {
     if (texts.length === 0) return "";
     if (texts.length === 1) return texts[0].trim();
@@ -112,12 +183,17 @@ export default function Home() {
       const prevLines = merged.split("\n");
       const currLines = current.split("\n");
 
-      // Try to find overlap: check if last N lines of prev match first N lines of curr
       let bestOverlap = 0;
       const maxCheck = Math.min(prevLines.length, currLines.length, 8);
       for (let n = 1; n <= maxCheck; n++) {
-        const prevTail = prevLines.slice(-n).map((l) => l.trim()).join("\n");
-        const currHead = currLines.slice(0, n).map((l) => l.trim()).join("\n");
+        const prevTail = prevLines
+          .slice(-n)
+          .map((l) => l.trim())
+          .join("\n");
+        const currHead = currLines
+          .slice(0, n)
+          .map((l) => l.trim())
+          .join("\n");
         if (prevTail === currHead) {
           bestOverlap = n;
         }
@@ -159,6 +235,55 @@ export default function Home() {
     navigator.clipboard.writeText(text);
   };
 
+  const handleUnlock = async () => {
+    if (!result) return;
+
+    // Not logged in → trigger Google sign in
+    if (!session?.user) {
+      signIn("google");
+      return;
+    }
+
+    // No database ID → need to save first
+    let resultId = result.id;
+    if (!resultId) {
+      const saveRes = await fetch("/api/ocr-results", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fullText: result.full_text,
+          preview: result.preview,
+          totalChars: result.total_chars,
+          segmentsProcessed: result.segments_processed,
+        }),
+      });
+      const saveData = await saveRes.json();
+      resultId = saveData.id;
+      setResults((prev) =>
+        prev.map((r, i) => (i === activeIndex ? { ...r, id: resultId } : r)),
+      );
+    }
+
+    // Create checkout session
+    const res = await fetch("/api/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ocrResultId: resultId }),
+    });
+    const data = await res.json();
+    if (data.url) {
+      window.location.href = data.url;
+    }
+  };
+
+  const markDownloaded = () => {
+    setResults((prev) =>
+      prev.map((r, i) =>
+        i === activeIndex ? { ...r, isDownloaded: true } : r,
+      ),
+    );
+  };
+
   const scenes: { value: Scene; label: string; labelEn: string }[] = [
     { value: "general", label: "通用", labelEn: "General" },
     { value: "chat", label: "聊天记录", labelEn: "Chat" },
@@ -182,19 +307,48 @@ export default function Home() {
               Long2Text
             </span>
           </div>
-          <nav className="flex items-center gap-6 text-sm text-slate-600">
+          <nav className="flex items-center gap-4 text-sm text-slate-600">
             <button
               onClick={() => setLang(lang === "ch" ? "en" : "ch")}
               className="rounded-md px-3 py-1 hover:bg-slate-100"
             >
               {lang === "ch" ? "EN" : "中文"}
             </button>
-            <a
-              href="#pricing"
-              className="hover:text-slate-900"
-            >
-              {lang === "ch" ? "价格" : "Pricing"}
-            </a>
+            {session?.user ? (
+              <>
+                <a
+                  href="/history"
+                  className="rounded-md px-3 py-1 hover:bg-slate-100"
+                >
+                  {lang === "ch" ? "历史记录" : "History"}
+                </a>
+                <div className="flex items-center gap-2">
+                  {session.user.image && (
+                    <img
+                      src={session.user.image}
+                      alt=""
+                      className="h-7 w-7 rounded-full"
+                    />
+                  )}
+                  <span className="max-w-[120px] truncate text-sm">
+                    {session.user.name}
+                  </span>
+                  <button
+                    onClick={() => signOut()}
+                    className="rounded-md px-2 py-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                  >
+                    {lang === "ch" ? "退出" : "Sign out"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button
+                onClick={() => signIn("google")}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                {lang === "ch" ? "Google 登录" : "Sign in with Google"}
+              </button>
+            )}
           </nav>
         </div>
       </header>
@@ -245,7 +399,7 @@ export default function Home() {
             dragActive
               ? "border-indigo-500 bg-indigo-50"
               : "border-slate-200 bg-white hover:border-slate-300"
-          } ${status === "idle" || status === "error" ? "cursor-pointer" : ""}`}
+          } ${status === "idle" || status === "error" || status === "done" ? "cursor-pointer" : ""}`}
           onDragOver={(e) => {
             e.preventDefault();
             setDragActive(true);
@@ -253,7 +407,7 @@ export default function Home() {
           onDragLeave={() => setDragActive(false)}
           onDrop={handleDrop}
           onClick={() =>
-            (status === "idle" || status === "error") &&
+            (status === "idle" || status === "error" || status === "done") &&
             fileInputRef.current?.click()
           }
         >
@@ -321,11 +475,20 @@ export default function Home() {
                   : "Recognizing each segment, then merging"}
               </p>
             </div>
+          ) : status === "done" ? (
+            <>
+              <div className="mb-2 text-3xl">📸</div>
+              <p className="text-sm font-medium text-slate-500">
+                {lang === "ch"
+                  ? "点击或拖拽上传另一张图片"
+                  : "Click or drop to convert another image"}
+              </p>
+            </>
           ) : null}
         </section>
 
         {/* Image Preview */}
-        {previewUrl && status !== "idle" && (
+        {previewUrl && (status === "splitting" || status === "processing") && (
           <section className="mb-8 flex justify-center">
             <div className="max-h-64 overflow-hidden rounded-xl border border-slate-200 shadow-sm">
               <img
@@ -337,8 +500,28 @@ export default function Home() {
           </section>
         )}
 
+        {/* Results tabs (when multiple) */}
+        {results.length > 1 && (
+          <section className="mb-4 flex gap-2 overflow-x-auto">
+            {results.map((r, i) => (
+              <button
+                key={i}
+                onClick={() => setActiveIndex(i)}
+                className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+                  i === activeIndex
+                    ? "bg-indigo-600 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                {lang === "ch" ? `结果 ${i + 1}` : `Result ${i + 1}`}
+                {r.isPaid && " ✓"}
+              </button>
+            ))}
+          </section>
+        )}
+
         {/* Results */}
-        {status === "done" && result && (
+        {result && (status === "done" || results.length > 0) && (
           <section className="mb-16">
             {/* Stats bar */}
             <div className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-xl bg-slate-50 px-6 py-3">
@@ -359,11 +542,10 @@ export default function Home() {
               <div className="flex gap-2">
                 <button
                   onClick={() => {
-                    if (isPaid && result.full_text) {
-                      copyToClipboard(result.full_text);
-                    } else {
-                      copyToClipboard(result.preview);
-                    }
+                    const text = result.isPaid
+                      ? result.full_text
+                      : result.preview;
+                    copyToClipboard(text);
                   }}
                   className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-300"
                 >
@@ -371,13 +553,16 @@ export default function Home() {
                 </button>
                 <button
                   onClick={() => {
-                    const text = isPaid ? result.full_text : result.preview;
+                    const text = result.isPaid
+                      ? result.full_text
+                      : result.preview;
                     const blob = new Blob([text], { type: "text/markdown" });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement("a");
                     a.href = url;
                     a.download = "long2text-result.md";
                     a.click();
+                    markDownloaded();
                   }}
                   className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
                 >
@@ -389,11 +574,11 @@ export default function Home() {
             {/* Text result */}
             <div className="relative rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
               <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-slate-800">
-                {isPaid ? result.full_text : result.preview}
+                {result.isPaid ? result.full_text : result.preview}
               </pre>
 
               {/* Paywall overlay */}
-              {!isPaid && result.total_chars > 500 && (
+              {!result.isPaid && result.total_chars > 500 && (
                 <div className="absolute inset-x-0 bottom-0 flex flex-col items-center rounded-b-xl bg-gradient-to-t from-white via-white/95 to-transparent pb-8 pt-32">
                   <p className="mb-4 text-center text-lg font-semibold text-slate-800">
                     {lang === "ch"
@@ -401,12 +586,16 @@ export default function Home() {
                       : `Full content: ${result.total_chars} chars. Unlock to see all.`}
                   </p>
                   <button
-                    onClick={() => setIsPaid(true)}
+                    onClick={handleUnlock}
                     className="rounded-xl bg-indigo-600 px-8 py-3 text-base font-semibold text-white shadow-lg transition-all hover:bg-indigo-700 hover:shadow-xl"
                   >
-                    {lang === "ch"
-                      ? "解锁完整结果 - $0.99"
-                      : "Unlock Full Result - $0.99"}
+                    {!session?.user
+                      ? lang === "ch"
+                        ? "登录后解锁 - $0.99"
+                        : "Sign in to Unlock - $0.99"
+                      : lang === "ch"
+                        ? "解锁完整结果 - $0.99"
+                        : "Unlock Full Result - $0.99"}
                   </button>
                   <p className="mt-2 text-xs text-slate-400">
                     {lang === "ch"
@@ -415,21 +604,6 @@ export default function Home() {
                   </p>
                 </div>
               )}
-            </div>
-
-            {/* Try another */}
-            <div className="mt-6 text-center">
-              <button
-                onClick={() => {
-                  setStatus("idle");
-                  setResult(null);
-                  setPreviewUrl(null);
-                  setIsPaid(false);
-                }}
-                className="text-sm text-indigo-600 hover:text-indigo-700"
-              >
-                {lang === "ch" ? "转换另一张图片" : "Convert another image"}
-              </button>
             </div>
           </section>
         )}
