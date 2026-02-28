@@ -1,37 +1,9 @@
 /**
- * Tencent Cloud OCR API client.
- * Uses GeneralBasicOCR for text recognition.
- *
- * Pricing: 1000 free calls/month, then ~¥0.006/call.
- * Docs: https://cloud.tencent.com/document/product/866/33526
+ * Tencent Cloud OCR API client using raw HTTP (TC3-HMAC-SHA256).
+ * The official SDK has a bug where Authorization header contains newlines,
+ * which breaks on Vercel's Node.js 18+ (undici strict header validation).
  */
-import * as tencentcloud from "tencentcloud-sdk-nodejs-ocr";
-
-const OcrClient = tencentcloud.ocr.v20181119.Client;
-
-let client: InstanceType<typeof OcrClient> | null = null;
-
-function getClient() {
-  if (!client) {
-    const secretId = process.env.TENCENT_SECRET_ID;
-    const secretKey = process.env.TENCENT_SECRET_KEY;
-
-    if (!secretId || !secretKey) {
-      throw new Error(
-        "Missing TENCENT_SECRET_ID or TENCENT_SECRET_KEY environment variables",
-      );
-    }
-
-    client = new OcrClient({
-      credential: { secretId, secretKey },
-      region: "ap-beijing",
-      profile: {
-        httpProfile: { endpoint: "ocr.tencentcloudapi.com" },
-      },
-    });
-  }
-  return client;
-}
+import crypto from "crypto";
 
 export interface OCRBlock {
   text: string;
@@ -40,105 +12,120 @@ export interface OCRBlock {
   x: number;
 }
 
+function sha256(data: string | Buffer): string {
+  return crypto.createHash("sha256").update(data).digest("hex");
+}
+
+function hmacSha256(key: string | Buffer, data: string): Buffer {
+  return crypto.createHmac("sha256", key).update(data).digest();
+}
+
+function getDate(timestamp: number): string {
+  return new Date(timestamp * 1000).toISOString().slice(0, 10);
+}
+
 /**
- * Run OCR on an image buffer using Tencent Cloud.
+ * Run OCR on an image buffer using Tencent Cloud GeneralBasicOCR.
  */
 export async function ocrImage(imageBuffer: Buffer): Promise<OCRBlock[]> {
-  const c = getClient();
-  const base64 = imageBuffer.toString("base64");
+  const secretId = process.env.TENCENT_SECRET_ID;
+  const secretKey = process.env.TENCENT_SECRET_KEY;
 
-  const resp = await c.GeneralBasicOCR({
-    ImageBase64: base64,
+  if (!secretId || !secretKey) {
+    throw new Error("Missing TENCENT_SECRET_ID or TENCENT_SECRET_KEY");
+  }
+
+  const service = "ocr";
+  const host = "ocr.tencentcloudapi.com";
+  const action = "GeneralBasicOCR";
+  const version = "2018-11-19";
+  const region = "ap-beijing";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const date = getDate(timestamp);
+
+  const payload = JSON.stringify({
+    ImageBase64: imageBuffer.toString("base64"),
     LanguageType: "auto",
   });
 
-  if (!resp.TextDetections) return [];
+  // Step 1: Build canonical request
+  const httpRequestMethod = "POST";
+  const canonicalUri = "/";
+  const canonicalQueryString = "";
+  const contentType = "application/json; charset=utf-8";
+  const canonicalHeaders =
+    `content-type:${contentType}\n` + `host:${host}\n`;
+  const signedHeaders = "content-type;host";
+  const hashedPayload = sha256(payload);
+  const canonicalRequest = [
+    httpRequestMethod,
+    canonicalUri,
+    canonicalQueryString,
+    canonicalHeaders,
+    signedHeaders,
+    hashedPayload,
+  ].join("\n");
 
-  return resp.TextDetections.map((det) => ({
-    text: det.DetectedText || "",
-    confidence: det.Confidence || 0,
-    y: det.ItemPolygon?.Y || 0,
-    x: det.ItemPolygon?.X || 0,
-  }));
-}
+  // Step 2: Build string to sign
+  const algorithm = "TC3-HMAC-SHA256";
+  const credentialScope = `${date}/${service}/tc3_request`;
+  const stringToSign = [
+    algorithm,
+    timestamp.toString(),
+    credentialScope,
+    sha256(canonicalRequest),
+  ].join("\n");
 
-/**
- * Merge OCR results from overlapping segments, removing duplicates.
- */
-export function mergeOCRResults(
-  allResults: OCRBlock[][],
-  overlap: number,
-  segmentHeight: number,
-): string {
-  if (allResults.length === 0) return "";
-  if (allResults.length === 1) {
-    return allResults[0].map((b) => b.text).join("\n");
+  // Step 3: Calculate signature
+  const secretDate = hmacSha256(`TC3${secretKey}`, date);
+  const secretService = hmacSha256(secretDate, service);
+  const secretSigning = hmacSha256(secretService, "tc3_request");
+  const signature = crypto
+    .createHmac("sha256", secretSigning)
+    .update(stringToSign)
+    .digest("hex");
+
+  // Step 4: Build authorization (single line, no newlines!)
+  const authorization =
+    `${algorithm} Credential=${secretId}/${credentialScope}, ` +
+    `SignedHeaders=${signedHeaders}, ` +
+    `Signature=${signature}`;
+
+  const resp = await fetch(`https://${host}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": contentType,
+      Host: host,
+      Authorization: authorization,
+      "X-TC-Action": action,
+      "X-TC-Version": version,
+      "X-TC-Timestamp": timestamp.toString(),
+      "X-TC-Region": region,
+    },
+    body: payload,
+  });
+
+  const data = await resp.json();
+
+  if (data.Response?.Error) {
+    throw new Error(
+      `Tencent OCR error: ${data.Response.Error.Code} - ${data.Response.Error.Message}`,
+    );
   }
 
-  const lines: string[] = [];
-  let prevBottomTexts = new Set<string>();
+  const detections = data.Response?.TextDetections;
+  if (!detections) return [];
 
-  for (let segIdx = 0; segIdx < allResults.length; segIdx++) {
-    const blocks = allResults[segIdx];
-
-    for (const block of blocks) {
-      // Skip duplicates from overlap zone
-      if (segIdx > 0 && block.y < overlap * 0.8) {
-        const key = block.text.trim();
-        if (prevBottomTexts.has(key)) continue;
-      }
-      lines.push(block.text);
-    }
-
-    // Track bottom overlap texts for next segment dedup
-    prevBottomTexts = new Set<string>();
-    for (const block of blocks) {
-      if (block.y > segmentHeight - overlap) {
-        prevBottomTexts.add(block.text.trim());
-      }
-    }
-  }
-
-  return lines.join("\n");
-}
-
-/**
- * Format raw text as markdown based on scene type.
- */
-export function formatAsMarkdown(
-  rawText: string,
-  scene: string,
-): string {
-  const lines = rawText.split("\n").filter((l) => l.trim());
-
-  if (scene === "chat") {
-    return lines.join("\n\n");
-  }
-
-  if (scene === "article") {
-    // Try to merge consecutive short lines into paragraphs
-    const paragraphs: string[] = [];
-    let current: string[] = [];
-
-    for (const line of lines) {
-      current.push(line);
-      // Heuristic: end of paragraph if line is short or ends with period
-      if (
-        line.endsWith("。") ||
-        line.endsWith(".") ||
-        line.endsWith("!") ||
-        line.endsWith("！") ||
-        line.length < 20
-      ) {
-        paragraphs.push(current.join(""));
-        current = [];
-      }
-    }
-    if (current.length) paragraphs.push(current.join(""));
-
-    return paragraphs.join("\n\n");
-  }
-
-  // general / meeting
-  return lines.join("\n");
+  return detections.map(
+    (det: {
+      DetectedText?: string;
+      Confidence?: number;
+      ItemPolygon?: { Y?: number; X?: number };
+    }) => ({
+      text: det.DetectedText || "",
+      confidence: det.Confidence || 0,
+      y: det.ItemPolygon?.Y || 0,
+      x: det.ItemPolygon?.X || 0,
+    }),
+  );
 }

@@ -16,8 +16,7 @@
     "next-intl": "^4.8.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "sharp": "^0.34.5",
-    "tencentcloud-sdk-nodejs-ocr": "^4.1.188"
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
