@@ -20,37 +20,43 @@ export async function POST(request: NextRequest) {
 
   const origin = request.headers.get("origin") || "https://long2text.com";
 
-  const checkoutSession = await stripe.checkout.sessions.create({
-    mode: "payment",
-    payment_method_types: ["card"],
-    line_items: [
-      {
-        price_data: {
-          currency: "usd",
-          product_data: {
-            name: "Long2Text - Unlock Full OCR Result",
+  try {
+    const checkoutSession = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: "Long2Text - Unlock Full OCR Result",
+            },
+            unit_amount: 99, // $0.99
           },
-          unit_amount: 99, // $0.99
+          quantity: 1,
         },
-        quantity: 1,
+      ],
+      metadata: {
+        userId: session.user.id,
+        ocrResultId,
       },
-    ],
-    metadata: {
+      success_url: `${origin}?paid=${ocrResultId}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}?canceled=true`,
+    });
+
+    // Create pending purchase record
+    await db.insert(purchases).values({
       userId: session.user.id,
       ocrResultId,
-    },
-    success_url: `${origin}?paid=${ocrResultId}&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${origin}?canceled=true`,
-  });
+      stripeSessionId: checkoutSession.id,
+      amount: 99,
+      status: "pending",
+    });
 
-  // Create pending purchase record
-  await db.insert(purchases).values({
-    userId: session.user.id,
-    ocrResultId,
-    stripeSessionId: checkoutSession.id,
-    amount: 99,
-    status: "pending",
-  });
-
-  return NextResponse.json({ url: checkoutSession.url });
+    return NextResponse.json({ url: checkoutSession.url });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Checkout creation failed";
+    console.error("[Checkout] error:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }
