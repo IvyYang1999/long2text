@@ -105,7 +105,10 @@ function Home() {
           let lastError = "";
           let success = false;
 
-          for (let attempt = 0; attempt < 2; attempt++) {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            if (attempt > 0) {
+              await new Promise((r) => setTimeout(r, 1000 * attempt));
+            }
             try {
               const seg = segments[i];
               const formData = new FormData();
@@ -143,6 +146,10 @@ function Home() {
             throw new Error(lastError);
           }
           setProgress({ current: i + 1, total: segments.length });
+          // Delay between segments to avoid Tencent Cloud QPS limit
+          if (i < segments.length - 1) {
+            await new Promise((r) => setTimeout(r, 300));
+          }
         }
 
         // Step 3: Merge segment texts
