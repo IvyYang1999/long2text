@@ -109,7 +109,7 @@ function Home() {
 
           for (let attempt = 0; attempt < 3; attempt++) {
             if (attempt > 0) {
-              await new Promise((r) => setTimeout(r, 2000 * attempt));
+              await new Promise((r) => setTimeout(r, 1000 * attempt));
             }
             try {
               const formData = new FormData();
@@ -148,9 +148,8 @@ function Home() {
             throw new Error(lastError);
           }
           setProgress({ current: i + 1, total: segments.length });
-          // Delay between segments: Tencent Cloud free tier = 1 QPS
           if (i < segments.length - 1) {
-            await new Promise((r) => setTimeout(r, 1100));
+            await new Promise((r) => setTimeout(r, 300));
           }
         }
 
