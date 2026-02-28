@@ -252,35 +252,49 @@ function Home() {
       return;
     }
 
-    // No database ID → need to save first
-    let resultId = result.id;
-    if (!resultId) {
-      const saveRes = await fetch("/api/ocr-results", {
+    try {
+      setError("");
+
+      // No database ID → need to save first
+      let resultId = result.id;
+      if (!resultId) {
+        const saveRes = await fetch("/api/ocr-results", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fullText: result.full_text,
+            preview: result.preview,
+            totalChars: result.total_chars,
+            segmentsProcessed: result.segments_processed,
+          }),
+        });
+        if (!saveRes.ok) {
+          throw new Error(`Save failed: ${saveRes.status}`);
+        }
+        const saveData = await saveRes.json();
+        resultId = saveData.id;
+        setResults((prev) =>
+          prev.map((r, i) => (i === activeIndex ? { ...r, id: resultId } : r)),
+        );
+      }
+
+      // Create checkout session
+      const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fullText: result.full_text,
-          preview: result.preview,
-          totalChars: result.total_chars,
-          segmentsProcessed: result.segments_processed,
-        }),
+        body: JSON.stringify({ ocrResultId: resultId }),
       });
-      const saveData = await saveRes.json();
-      resultId = saveData.id;
-      setResults((prev) =>
-        prev.map((r, i) => (i === activeIndex ? { ...r, id: resultId } : r)),
-      );
-    }
-
-    // Create checkout session
-    const res = await fetch("/api/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ocrResultId: resultId }),
-    });
-    const data = await res.json();
-    if (data.url) {
-      window.location.href = data.url;
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Checkout failed: ${res.status}`);
+      }
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (err) {
+      console.error("Unlock error:", err);
+      setError(err instanceof Error ? err.message : "Payment failed");
     }
   };
 
@@ -605,6 +619,9 @@ function Home() {
                         ? "解锁完整结果 - $0.99"
                         : "Unlock Full Result - $0.99"}
                   </button>
+                  {error && (
+                    <p className="mt-2 text-sm text-red-500">{error}</p>
+                  )}
                   <p className="mt-2 text-xs text-slate-400">
                     {lang === "ch"
                       ? "单次购买 | 安全支付"
