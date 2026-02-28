@@ -28,8 +28,8 @@ function getDate(timestamp: number): string {
  * Run OCR on an image buffer using Tencent Cloud GeneralBasicOCR.
  */
 export async function ocrImage(imageBuffer: Buffer): Promise<OCRBlock[]> {
-  const secretId = process.env.TENCENT_SECRET_ID;
-  const secretKey = process.env.TENCENT_SECRET_KEY;
+  const secretId = process.env.TENCENT_SECRET_ID?.trim();
+  const secretKey = process.env.TENCENT_SECRET_KEY?.trim();
 
   if (!secretId || !secretKey) {
     throw new Error("Missing TENCENT_SECRET_ID or TENCENT_SECRET_KEY");
