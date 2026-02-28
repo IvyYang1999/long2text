@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : "Processing failed";
-    console.error(`[OCR] FAILED - segment size: ${file.size} bytes, error: ${errMsg}`);
+    console.error(`[OCR] FAILED - error: ${errMsg}`);
     return NextResponse.json(
       {
         success: false,
