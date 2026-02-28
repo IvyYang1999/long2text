@@ -107,7 +107,7 @@ function Home() {
 
           for (let attempt = 0; attempt < 3; attempt++) {
             if (attempt > 0) {
-              await new Promise((r) => setTimeout(r, 1000 * attempt));
+              await new Promise((r) => setTimeout(r, 2000 * attempt));
             }
             try {
               const seg = segments[i];
@@ -124,7 +124,8 @@ function Home() {
               });
 
               if (!res.ok) {
-                lastError = `Segment ${i + 1} failed: ${res.status}`;
+                const errBody = await res.json().catch(() => ({}));
+                lastError = errBody.detail || `Segment ${i + 1} failed: ${res.status}`;
                 continue;
               }
 
@@ -146,9 +147,9 @@ function Home() {
             throw new Error(lastError);
           }
           setProgress({ current: i + 1, total: segments.length });
-          // Delay between segments to avoid Tencent Cloud QPS limit
+          // Delay between segments: Tencent Cloud free tier = 1 QPS
           if (i < segments.length - 1) {
-            await new Promise((r) => setTimeout(r, 300));
+            await new Promise((r) => setTimeout(r, 1100));
           }
         }
 
