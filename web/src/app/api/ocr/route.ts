@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ocrImage } from "@/lib/tencent-ocr";
 
 // Single segment OCR - client splits the image and sends segments one by one
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {

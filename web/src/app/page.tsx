@@ -99,32 +99,49 @@ function Home() {
         setProgress({ current: 0, total: segments.length });
         setStatus("processing");
 
-        // Step 2: Upload each segment and collect OCR results
+        // Step 2: Upload each segment with retry
         const segmentTexts: string[] = [];
         for (let i = 0; i < segments.length; i++) {
-          const seg = segments[i];
-          const formData = new FormData();
-          formData.append(
-            "file",
-            seg.blob,
-            `segment-${seg.index}.jpg`,
-          );
+          let lastError = "";
+          let success = false;
 
-          const res = await fetch("/api/ocr", {
-            method: "POST",
-            body: formData,
-          });
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const seg = segments[i];
+              const formData = new FormData();
+              formData.append(
+                "file",
+                seg.blob,
+                `segment-${seg.index}.jpg`,
+              );
 
-          if (!res.ok) {
-            throw new Error(`Segment ${i + 1} failed: ${res.status}`);
+              const res = await fetch("/api/ocr", {
+                method: "POST",
+                body: formData,
+              });
+
+              if (!res.ok) {
+                lastError = `Segment ${i + 1} failed: ${res.status}`;
+                continue;
+              }
+
+              const data = await res.json();
+              if (!data.success) {
+                lastError = data.detail || `Segment ${i + 1} failed`;
+                continue;
+              }
+
+              segmentTexts.push(data.text);
+              success = true;
+              break;
+            } catch (e) {
+              lastError = e instanceof Error ? e.message : "Network error";
+            }
           }
 
-          const data = await res.json();
-          if (!data.success) {
-            throw new Error(data.detail || `Segment ${i + 1} failed`);
+          if (!success) {
+            throw new Error(lastError);
           }
-
-          segmentTexts.push(data.text);
           setProgress({ current: i + 1, total: segments.length });
         }
 
