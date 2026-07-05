@@ -737,79 +737,41 @@ function Home() {
           <h2 className="mb-8 text-center text-2xl font-bold text-slate-900">
             {lang === "ch" ? "简单定价" : "Simple Pricing"}
           </h2>
-          <div className="grid gap-6 sm:grid-cols-3">
-            {[
-              {
-                name: lang === "ch" ? "免费" : "Free",
-                price: "$0",
-                features:
-                  lang === "ch"
-                    ? ["每天 3 次免费转换", "短图完整结果", "长图预览前20%"]
-                    : [
-                        "3 free conversions/day",
-                        "Full result for short images",
-                        "Preview first 20% for long images",
-                      ],
-              },
-              {
-                name: "Pro",
-                price: "$4.99/mo",
-                features:
-                  lang === "ch"
-                    ? [
-                        "无限转换次数",
-                        "完整结果 + 下载",
-                        "所有场景模式",
-                        "优先处理速度",
-                      ]
-                    : [
-                        "Unlimited conversions",
-                        "Full results + download",
-                        "All scene modes",
-                        "Priority processing",
-                      ],
-                highlight: true,
-              },
-              {
-                name: lang === "ch" ? "单次购买" : "Pay-per-use",
-                price: "$0.99",
-                features:
-                  lang === "ch"
-                    ? ["单张图片完整结果", "无需订阅", "即买即用"]
-                    : [
-                        "Full result for one image",
-                        "No subscription needed",
-                        "Instant access",
-                      ],
-              },
-            ].map((plan) => (
-              <div
-                key={plan.name}
-                className={`rounded-xl border p-6 ${
-                  plan.highlight
-                    ? "border-indigo-200 bg-indigo-50 shadow-md"
-                    : "border-slate-100 bg-white"
-                }`}
-              >
-                <h3 className="mb-1 text-lg font-semibold text-slate-900">
-                  {plan.name}
-                </h3>
-                <p className="mb-4 text-2xl font-bold text-indigo-600">
-                  {plan.price}
-                </p>
-                <ul className="space-y-2">
-                  {plan.features.map((f) => (
-                    <li
-                      key={f}
-                      className="flex items-start gap-2 text-sm text-slate-600"
-                    >
-                      <span className="text-green-500">&#10003;</span>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
+          <div className="mx-auto grid max-w-2xl gap-6 sm:grid-cols-2">
+            <div className="rounded-xl border border-slate-100 bg-white p-6">
+              <h3 className="mb-1 text-lg font-semibold text-slate-900">
+                {lang === "ch" ? "免费" : "Free"}
+              </h3>
+              <p className="mb-4 text-2xl font-bold text-indigo-600">$0</p>
+              <ul className="space-y-2">
+                {(lang === "ch"
+                  ? ["无限次转换", "短文完整结果（≤500字）", "长文预览前20%"]
+                  : ["Unlimited conversions", "Full result for short texts (≤500 chars)", "Preview first 20% for long texts"]
+                ).map((f) => (
+                  <li key={f} className="flex items-start gap-2 text-sm text-slate-600">
+                    <span className="text-green-500">&#10003;</span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-6 shadow-md">
+              <h3 className="mb-1 text-lg font-semibold text-slate-900">
+                {lang === "ch" ? "解锁完整结果" : "Unlock Full Result"}
+              </h3>
+              <p className="mb-4 text-2xl font-bold text-indigo-600">$0.99</p>
+              <ul className="space-y-2">
+                {(lang === "ch"
+                  ? ["单张图片完整结果", "无需订阅，即买即用", "支持复制和下载 Markdown"]
+                  : ["Full result for one image", "No subscription needed", "Copy & download Markdown"]
+                ).map((f) => (
+                  <li key={f} className="flex items-start gap-2 text-sm text-slate-600">
+                    <span className="text-green-500">&#10003;</span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
         </section>
 
@@ -848,6 +810,38 @@ function Home() {
                 </p>
               </>
             )}
+          </div>
+        </section>
+
+        {/* FAQ */}
+        <section className="mb-16">
+          <h2 className="mb-8 text-center text-2xl font-bold text-slate-900">
+            {lang === "ch" ? "常见问题" : "FAQ"}
+          </h2>
+          <div className="mx-auto max-w-3xl space-y-4">
+            {(lang === "ch"
+              ? [
+                  ["支持多长的截图？", "理论上无限长。Long2Text 会自动将超长截图切分为多个小段，逐段识别后智能合并，确保不丢字。"],
+                  ["支持哪些语言？", "支持中文、英文以及中英混合文本。其他语言也有基本支持。"],
+                  ["免费版有什么限制？", "免费版没有次数限制。500字以内的短文结果完全免费。超过500字的长文需要支付 $0.99 解锁完整结果。"],
+                  ["我的图片数据安全吗？", "图片仅在识别过程中使用，不会被存储。识别完成后图片即被丢弃。"],
+                  ["支持哪些图片格式？", "支持 PNG、JPG、WEBP 格式。你可以拖拽上传、点击上传，或直接 Ctrl+V 粘贴截图。"],
+                ]
+              : [
+                  ["How long can the screenshot be?", "Virtually unlimited. Long2Text automatically splits ultra-long screenshots into segments, recognizes each one, and merges them seamlessly."],
+                  ["What languages are supported?", "Chinese, English, and mixed Chinese-English text are fully supported. Other languages have basic support."],
+                  ["What are the free tier limits?", "No daily limit on conversions. Short texts (under 500 characters) are completely free. Longer texts require a $0.99 one-time payment to unlock the full result."],
+                  ["Is my image data safe?", "Images are only used during the recognition process and are not stored. They are discarded immediately after processing."],
+                  ["What image formats are supported?", "PNG, JPG, and WEBP. You can drag & drop, click to upload, or paste with Ctrl+V."],
+                ]
+            ).map(([q, a]) => (
+              <details key={q} className="group rounded-xl border border-slate-200 bg-white">
+                <summary className="cursor-pointer px-6 py-4 text-sm font-medium text-slate-900 hover:bg-slate-50">
+                  {q}
+                </summary>
+                <p className="px-6 pb-4 text-sm leading-relaxed text-slate-600">{a}</p>
+              </details>
+            ))}
           </div>
         </section>
       </main>

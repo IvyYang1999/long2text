@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /history
+
+Sitemap: https://long2text.com/sitemap.xml
