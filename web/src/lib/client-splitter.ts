@@ -110,3 +110,20 @@ export async function splitImageInBrowser(
     img.src = url;
   });
 }
+
+/** Crop rows [y0, y1) of a segment image and upscale by `scale` (browser only). */
+export async function cropAndScale(blob: Blob, y0: number, y1: number, scale: number): Promise<Blob> {
+  const bitmap = await createImageBitmap(blob);
+  const h = Math.max(1, Math.min(bitmap.height, y1) - y0);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(h * scale);
+  const ctx = canvas.getContext("2d")!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bitmap, 0, y0, bitmap.width, h, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Failed to create blob"))), "image/jpeg", 0.92);
+  });
+}

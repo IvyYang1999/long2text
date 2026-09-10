@@ -4,7 +4,8 @@ import { useState, useCallback, useRef, useEffect, Suspense } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { splitImageInBrowser } from "@/lib/client-splitter";
+import { splitImageInBrowser, cropAndScale } from "@/lib/client-splitter";
+import { findSmallTextRegions, unscaleBlocks, mergeEnhanced, ENHANCE_SCALE } from "@/lib/enhance";
 import { structure, previewOf, type SegmentResult, type Scene, type DetectedScene, type OCRBlock } from "@/lib/structure";
 import MarkdownView from "@/components/MarkdownView";
 
@@ -40,6 +41,7 @@ interface OCRResult {
 }
 
 interface LiveState {
+  enhancing: boolean;
   current: number;
   total: number;
   etaSec: number | null;
@@ -76,7 +78,7 @@ function Home() {
   const [error, setError] = useState("");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [live, setLive] = useState<LiveState>({ current: 0, total: 0, etaSec: null, markdown: "", scene: null });
+  const [live, setLive] = useState<LiveState>({ enhancing: false, current: 0, total: 0, etaSec: null, markdown: "", scene: null });
   const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<OCRResult[]>([]);
@@ -187,14 +189,14 @@ function Home() {
       setPreviewUrl(url);
       setStatus("splitting");
       setError("");
-      setLive({ current: 0, total: 0, etaSec: null, markdown: "", scene: null });
+      setLive({ enhancing: false, current: 0, total: 0, etaSec: null, markdown: "", scene: null });
       const labels = { me: t.me, other: t.other };
 
       try {
         // 1. Split in the browser
         const splitInfo = await splitImageInBrowser(file);
         const { segments, width } = splitInfo;
-        setLive({ current: 0, total: segments.length, etaSec: null, markdown: "", scene: null });
+        setLive({ enhancing: false, current: 0, total: segments.length, etaSec: null, markdown: "", scene: null });
         setStatus("processing");
 
         // 2. OCR each segment (Tencent free tier ≈ 1 QPS, so sequential)
@@ -203,28 +205,46 @@ function Home() {
         const started = Date.now();
         for (let i = 0; i < segments.length; i++) {
           const seg = segments[i];
-          let blocks: OCRBlock[] | null = null;
-          let lastError = "";
-          for (let attempt = 0; attempt < 3 && !blocks; attempt++) {
-            if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * attempt));
-            try {
-              const formData = new FormData();
-              formData.append("file", seg.blob, `segment-${seg.index}.jpg`);
-              const res = await fetch("/api/ocr", { method: "POST", body: formData });
-              const data = await res.json().catch(() => ({}));
-              if (!res.ok || !data.success) {
-                lastError = data.detail || `HTTP ${res.status}`;
-                continue;
+          const ocr = async (blob: Blob, name: string): Promise<OCRBlock[] | null> => {
+            let lastError = "";
+            for (let attempt = 0; attempt < 3; attempt++) {
+              if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * attempt));
+              try {
+                const formData = new FormData();
+                formData.append("file", blob, name);
+                const res = await fetch("/api/ocr", { method: "POST", body: formData });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data.success) {
+                  lastError = data.detail || `HTTP ${res.status}`;
+                  continue;
+                }
+                return (data.blocks || []) as OCRBlock[];
+              } catch (e) {
+                lastError = e instanceof Error ? e.message : "Network error";
               }
-              blocks = (data.blocks || []) as OCRBlock[];
-            } catch (e) {
-              lastError = e instanceof Error ? e.message : "Network error";
             }
-          }
+            console.error(`[OCR] ${name} failed: ${lastError}`);
+            return null;
+          };
+          let blocks = await ocr(seg.blob, `segment-${seg.index}.jpg`);
           if (!blocks) {
-            console.error(`[OCR] segment ${i + 1} failed: ${lastError}`);
             failed.push(i + 1);
             blocks = [];
+          }
+          // Small text (e.g. a screenshot inside the screenshot): re-OCR at 2× and keep the more confident line
+          const regions = findSmallTextRegions(blocks, seg.yEnd - seg.yStart);
+          for (const region of regions) {
+            try {
+              setLive((l) => ({ ...l, enhancing: true }));
+              await new Promise((r) => setTimeout(r, 100));
+              const crop = await cropAndScale(seg.blob, region.y0, region.y1, ENHANCE_SCALE);
+              const enhanced = await ocr(crop, `segment-${seg.index}-zoom.jpg`);
+              if (enhanced) blocks = mergeEnhanced(blocks, unscaleBlocks(enhanced, region, ENHANCE_SCALE), region);
+            } catch (e) {
+              console.error("[OCR] enhance failed", e);
+            } finally {
+              setLive((l) => ({ ...l, enhancing: false }));
+            }
           }
           done.push({ index: seg.index, yStart: seg.yStart, yEnd: seg.yEnd, blocks });
 
@@ -233,6 +253,7 @@ function Home() {
           const perSeg = elapsed / (i + 1);
           const partial = structure(done, width, scene, labels);
           setLive({
+            enhancing: false,
             current: i + 1,
             total: segments.length,
             etaSec: i + 1 < segments.length ? Math.ceil(perSeg * (segments.length - i - 1)) : 0,
@@ -513,7 +534,11 @@ function Home() {
                       : `Recognizing segment ${Math.min(live.current + 1, live.total)} / ${live.total}`}
                 </p>
                 <p className="mt-1 text-xs text-slate-400">
-                  {live.etaSec !== null && live.etaSec > 0
+                  {live.enhancing
+                    ? lang === "ch"
+                      ? "发现小字区域，正在放大重新识别…"
+                      : "Small text found — re-reading it at 2× zoom…"
+                    : live.etaSec !== null && live.etaSec > 0
                     ? lang === "ch"
                       ? `预计还需 ${live.etaSec} 秒 · 识别引擎限 1 段/秒，长图请稍候`
                       : `About ${live.etaSec}s left · the OCR engine allows 1 segment/s`
