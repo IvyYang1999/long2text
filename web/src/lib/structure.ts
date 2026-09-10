@@ -315,7 +315,8 @@ export function buildParagraphs(lines: Line[], imageWidth: number): { paragraphs
       const multiCell = r.cells.length > 1 || prev.cells.length > 1;
       const meta = isTimestamp(rowText(r)) || isTimestamp(rowText(prev));
       const shift = Math.abs(rowLeft(r) - rowLeft(prev)) > lh * 1.6 && rowText(prev).length > 0;
-      const sizeJump = prev.h > 0 && (r.h / prev.h > 1.3 || prev.h / r.h > 1.3);
+      const tiny = rowText(r).length <= 2 || rowText(prev).length <= 2; // a lone wrapped char has an unreliable box
+      const sizeJump = !tiny && prev.h > 0 && (r.h / prev.h > 1.45 || prev.h / r.h > 1.45);
       const prevW = rowRight(prev) - rowLeft(prev);
       const curW = rowRight(r) - rowLeft(r);
       // a lone short row (heading / name) followed by a much wider row
@@ -387,6 +388,8 @@ function formatChat(paragraphs: Paragraph[], lh: number, labels: { me: string; o
   const nRight = nonTime.filter((p) => p.side === "right").length;
   const nLeft = nonTime.filter((p) => p.side === "left").length;
   const hasBubbles = nRight >= Math.max(2, nonTime.length * 0.08) && nLeft >= Math.max(2, nonTime.length * 0.08);
+  // In bubble chats a name row sits at the left column, slightly less indented than bubble text
+  const leftColumn = modeOf(nonTime.filter((p) => p.side !== "right").map((p) => p.x), lh * 0.4);
   for (let i = 0; i < paragraphs.length; i++) {
     const p = paragraphs[i];
     const cells = p.lines[0].cells;
@@ -417,7 +420,7 @@ function formatChat(paragraphs: Paragraph[], lh: number, labels: { me: string; o
       out.push(`**${speaker}**`);
       continue;
     }
-    if (nameLike && hasBubbles && next.side !== "right" && p.side !== "right") {
+    if (nameLike && hasBubbles && next.side !== "right" && p.side !== "right" && p.x <= leftColumn + lh * 0.5 && next.x - p.x > lh * 0.3) {
       pendingName = text;
       continue;
     }
