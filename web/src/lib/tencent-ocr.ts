@@ -10,6 +10,8 @@ export interface OCRBlock {
   confidence: number;
   y: number;
   x: number;
+  width: number;
+  height: number;
 }
 
 function sha256(data: string | Buffer): string {
@@ -124,12 +126,14 @@ export async function ocrImage(imageBuffer: Buffer): Promise<OCRBlock[]> {
     (det: {
       DetectedText?: string;
       Confidence?: number;
-      ItemPolygon?: { Y?: number; X?: number };
+      ItemPolygon?: { Y?: number; X?: number; Width?: number; Height?: number };
     }) => ({
       text: det.DetectedText || "",
       confidence: det.Confidence || 0,
       y: det.ItemPolygon?.Y || 0,
       x: det.ItemPolygon?.X || 0,
+      width: det.ItemPolygon?.Width || 0,
+      height: det.ItemPolygon?.Height || 0,
     }),
   );
 }
