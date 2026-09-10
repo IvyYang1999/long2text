@@ -44,6 +44,10 @@ function Home() {
   const [progress, setProgress] = useState({ current: 0, total: 0 });
 
   const result = results[activeIndex] || null;
+  const resultsRef = useRef<OCRResult[]>([]);
+  useEffect(() => {
+    resultsRef.current = results;
+  }, [results]);
 
   // Handle Stripe success callback - reload result from DB
   useEffect(() => {
@@ -81,18 +85,14 @@ function Home() {
             isDownloaded: false,
           };
 
-          setResults((prev) => {
-            const exists = prev.some((r) => r.id === paidResultId);
-            if (exists) {
-              return prev.map((r) => r.id === paidResultId ? newResult : r);
-            }
-            return [...prev, newResult];
-          });
-          setActiveIndex((prev) => {
-            // Point to the paid result
-            const idx = results.findIndex((r) => r.id === paidResultId);
-            return idx >= 0 ? idx : 0;
-          });
+          const current = resultsRef.current;
+          const exists = current.some((r) => r.id === paidResultId);
+          const next = exists
+            ? current.map((r) => (r.id === paidResultId ? newResult : r))
+            : [...current, newResult];
+          setResults(next);
+          // Point to the paid result (read from the ref, not a stale closure)
+          setActiveIndex(Math.max(0, next.findIndex((r) => r.id === paidResultId)));
           setStatus("done");
         }
       } catch (err) {
