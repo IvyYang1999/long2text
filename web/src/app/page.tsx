@@ -2,8 +2,11 @@
 
 import { useState, useCallback, useRef, useEffect, Suspense } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { splitImageInBrowser } from "@/lib/client-splitter";
+import { structure, previewOf, type SegmentResult, type Scene, type DetectedScene, type OCRBlock } from "@/lib/structure";
+import MarkdownView from "@/components/MarkdownView";
 
 export default function Page() {
   return (
@@ -13,23 +16,56 @@ export default function Page() {
   );
 }
 
-type Scene = "general" | "chat" | "meeting" | "article";
 type Lang = "ch" | "en";
 type Status = "idle" | "splitting" | "processing" | "done" | "error";
 
+const FREE_CHARS = 500;
+const PREVIEW_RATIO = 0.3;
+
 interface OCRResult {
   id?: string; // database id (if saved)
-  full_text: string;
+  name: string; // file name
+  imageWidth: number;
+  segments: SegmentResult[]; // kept so the scene can be re-applied without re-OCR
+  scene: DetectedScene; // scene actually used for formatting
+  markdown: string;
+  plain: string;
   preview: string;
   total_chars: number;
-  total_lines: number;
+  total_blocks: number; // paragraphs / messages
   segments_processed: number;
+  failed_segments: number[];
   isPaid: boolean;
   isDownloaded: boolean;
 }
 
+interface LiveState {
+  current: number;
+  total: number;
+  etaSec: number | null;
+  markdown: string;
+  scene: DetectedScene | null;
+}
+
+const T = {
+  ch: {
+    me: "我",
+    other: "对方",
+    scenes: { general: "自动", chat: "聊天记录", meeting: "会议记录", article: "文章/长文" } as Record<Scene, string>,
+    sceneDetected: { chat: "聊天记录", meeting: "会议记录", article: "文章" } as Record<DetectedScene, string>,
+    units: { chat: "条消息", meeting: "段发言", article: "个段落" } as Record<DetectedScene, string>,
+  },
+  en: {
+    me: "Me",
+    other: "Them",
+    scenes: { general: "Auto", chat: "Chat", meeting: "Meeting", article: "Article" } as Record<Scene, string>,
+    sceneDetected: { chat: "chat", meeting: "meeting", article: "article" } as Record<DetectedScene, string>,
+    units: { chat: "messages", meeting: "speeches", article: "paragraphs" } as Record<DetectedScene, string>,
+  },
+};
+
 function Home() {
-  const { data: session, status: authStatus } = useSession();
+  const { data: session } = useSession();
   const searchParams = useSearchParams();
 
   const [status, setStatus] = useState<Status>("idle");
@@ -39,17 +75,27 @@ function Home() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [error, setError] = useState("");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
-
-  const result = results[activeIndex] || null;
+  const [live, setLive] = useState<LiveState>({ current: 0, total: 0, etaSec: null, markdown: "", scene: null });
+  const [copied, setCopied] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<OCRResult[]>([]);
   useEffect(() => {
     resultsRef.current = results;
   }, [results]);
 
-  // Handle Stripe success callback - reload result from DB
+  // Pick UI language from the browser on first load
+  useEffect(() => {
+    // Browser language is only known on the client; one-time sync after hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (typeof navigator !== "undefined" && !/^zh/i.test(navigator.language)) setLang("en");
+  }, []);
+
+  const t = T[lang];
+  const result = results[activeIndex] || null;
+  const busy = status === "splitting" || status === "processing";
+
+  // ── Stripe success callback: reload the paid result from the DB ──
   useEffect(() => {
     const paidResultId = searchParams.get("paid");
     const sessionId = searchParams.get("session_id");
@@ -57,41 +103,41 @@ function Home() {
 
     (async () => {
       try {
-        // Webhook may not have fired yet - poll a few times
         let paid = false;
         for (let i = 0; i < 5; i++) {
           const verifyRes = await fetch(`/api/verify-payment?ocrResultId=${paidResultId}`);
           const verifyData = await verifyRes.json();
-          if (verifyData.paid) { paid = true; break; }
+          if (verifyData.paid) {
+            paid = true;
+            break;
+          }
           await new Promise((r) => setTimeout(r, 1500));
         }
-
-        // Fetch the full result from DB
         const res = await fetch("/api/ocr-results");
         const allResults = await res.json();
         const dbResult = allResults.find((r: { id: string }) => r.id === paidResultId);
-
         if (dbResult) {
-          const fullText = dbResult.fullText || dbResult.preview || "";
-          const lines = fullText.split("\n");
-          const newResult: OCRResult = {
+          const markdown: string = dbResult.fullText || dbResult.preview || "";
+          const restored: OCRResult = {
             id: dbResult.id,
-            full_text: fullText,
+            name: "",
+            imageWidth: 0,
+            segments: [],
+            scene: "article",
+            markdown,
+            plain: markdown,
             preview: dbResult.preview || "",
-            total_chars: dbResult.totalChars || fullText.length,
-            total_lines: lines.length,
+            total_chars: dbResult.totalChars || markdown.length,
+            total_blocks: markdown.split(/\n{2,}/).length,
             segments_processed: dbResult.segmentsProcessed || 0,
-            isPaid: paid || (dbResult.totalChars <= 500),
+            failed_segments: [],
+            isPaid: paid || dbResult.totalChars <= FREE_CHARS,
             isDownloaded: false,
           };
-
           const current = resultsRef.current;
           const exists = current.some((r) => r.id === paidResultId);
-          const next = exists
-            ? current.map((r) => (r.id === paidResultId ? newResult : r))
-            : [...current, newResult];
+          const next = exists ? current.map((r) => (r.id === paidResultId ? restored : r)) : [...current, restored];
           setResults(next);
-          // Point to the paid result (read from the ref, not a stale closure)
           setActiveIndex(Math.max(0, next.findIndex((r) => r.id === paidResultId)));
           setStatus("done");
         }
@@ -102,11 +148,10 @@ function Home() {
     })();
   }, [searchParams]);
 
-  // beforeunload warning for undownloaded results
+  // Warn before leaving with an un-downloaded paid result
   useEffect(() => {
-    const hasUndownloaded = results.some((r) => !r.isDownloaded && r.isPaid);
+    const hasUndownloaded = results.some((r) => !r.isDownloaded && r.isPaid && r.total_chars > FREE_CHARS);
     if (!hasUndownloaded) return;
-
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
     };
@@ -114,10 +159,27 @@ function Home() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [results]);
 
+  const saveToDb = useCallback(async (r: OCRResult): Promise<string | undefined> => {
+    const saveRes = await fetch("/api/ocr-results", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fullText: r.markdown,
+        preview: r.preview,
+        totalChars: r.total_chars,
+        segmentsProcessed: r.segments_processed,
+      }),
+    });
+    if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
+    const saveData = await saveRes.json();
+    return saveData.id as string | undefined;
+  }, []);
+
   const handleFile = useCallback(
     async (file: File) => {
+      if (busy) return;
       if (!file.type.startsWith("image/")) {
-        setError("Please upload an image file (PNG, JPG, WEBP)");
+        setError(lang === "ch" ? "请上传图片文件（PNG、JPG、WEBP）" : "Please upload an image file (PNG, JPG, WEBP)");
         return;
       }
 
@@ -125,155 +187,123 @@ function Home() {
       setPreviewUrl(url);
       setStatus("splitting");
       setError("");
-      setProgress({ current: 0, total: 0 });
+      setLive({ current: 0, total: 0, etaSec: null, markdown: "", scene: null });
+      const labels = { me: t.me, other: t.other };
 
       try {
-        // Step 1: Split image in browser
+        // 1. Split in the browser
         const splitInfo = await splitImageInBrowser(file);
-        const { segments } = splitInfo;
-        setProgress({ current: 0, total: segments.length });
+        const { segments, width } = splitInfo;
+        setLive({ current: 0, total: segments.length, etaSec: null, markdown: "", scene: null });
         setStatus("processing");
 
-        // Step 2: Upload each segment with retry
-        const segmentTexts: string[] = [];
+        // 2. OCR each segment (Tencent free tier ≈ 1 QPS, so sequential)
+        const done: SegmentResult[] = [];
+        const failed: number[] = [];
+        const started = Date.now();
         for (let i = 0; i < segments.length; i++) {
-          let lastError = "";
-          let success = false;
           const seg = segments[i];
-          const blobKB = (seg.blob.size / 1024).toFixed(1);
-
-          for (let attempt = 0; attempt < 3; attempt++) {
-            if (attempt > 0) {
-              await new Promise((r) => setTimeout(r, 1000 * attempt));
-            }
+          let blocks: OCRBlock[] | null = null;
+          let lastError = "";
+          for (let attempt = 0; attempt < 3 && !blocks; attempt++) {
+            if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * attempt));
             try {
               const formData = new FormData();
-              formData.append(
-                "file",
-                seg.blob,
-                `segment-${seg.index}.jpg`,
-              );
-
-              const res = await fetch("/api/ocr", {
-                method: "POST",
-                body: formData,
-              });
-
-              if (!res.ok) {
-                const errBody = await res.json().catch(() => ({}));
-                lastError = `Seg ${i + 1} (${blobKB}KB): ${errBody.detail || res.status}`;
+              formData.append("file", seg.blob, `segment-${seg.index}.jpg`);
+              const res = await fetch("/api/ocr", { method: "POST", body: formData });
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok || !data.success) {
+                lastError = data.detail || `HTTP ${res.status}`;
                 continue;
               }
-
-              const data = await res.json();
-              if (!data.success) {
-                lastError = data.detail || `Segment ${i + 1} failed`;
-                continue;
-              }
-
-              segmentTexts.push(data.text);
-              success = true;
-              break;
+              blocks = (data.blocks || []) as OCRBlock[];
             } catch (e) {
               lastError = e instanceof Error ? e.message : "Network error";
             }
           }
+          if (!blocks) {
+            console.error(`[OCR] segment ${i + 1} failed: ${lastError}`);
+            failed.push(i + 1);
+            blocks = [];
+          }
+          done.push({ index: seg.index, yStart: seg.yStart, yEnd: seg.yEnd, blocks });
 
-          if (!success) {
-            throw new Error(lastError);
-          }
-          setProgress({ current: i + 1, total: segments.length });
-          if (i < segments.length - 1) {
-            await new Promise((r) => setTimeout(r, 300));
-          }
+          // 3. Progressive structuring so the user sees text while waiting
+          const elapsed = (Date.now() - started) / 1000;
+          const perSeg = elapsed / (i + 1);
+          const partial = structure(done, width, scene, labels);
+          setLive({
+            current: i + 1,
+            total: segments.length,
+            etaSec: i + 1 < segments.length ? Math.ceil(perSeg * (segments.length - i - 1)) : 0,
+            markdown: partial.markdown,
+            scene: partial.scene,
+          });
+          if (i < segments.length - 1) await new Promise((r) => setTimeout(r, 100));
         }
 
-        // Step 3: Merge segment texts
-        const fullText = mergeSegmentTexts(segmentTexts);
-        const lines = fullText.split("\n");
-        const preview = lines
-          .slice(0, Math.max(5, Math.ceil(lines.length * 0.2)))
-          .join("\n");
+        if (failed.length === segments.length) {
+          throw new Error(lang === "ch" ? "识别失败，请稍后重试" : "Recognition failed, please try again");
+        }
 
+        // 4. Final structure
+        const final = structure(done, width, scene, labels);
         const newResult: OCRResult = {
-          full_text: fullText,
-          preview,
-          total_chars: fullText.length,
-          total_lines: lines.length,
+          name: file.name,
+          imageWidth: width,
+          segments: done,
+          scene: final.scene,
+          markdown: final.markdown,
+          plain: final.plain,
+          preview: previewOf(final.markdown, PREVIEW_RATIO),
+          total_chars: final.plain.replace(/\s/g, "").length,
+          total_blocks: final.paragraphs.length,
           segments_processed: segments.length,
-          isPaid: fullText.length <= 500, // free if short
+          failed_segments: failed,
+          isPaid: final.plain.replace(/\s/g, "").length <= FREE_CHARS,
           isDownloaded: false,
         };
 
-        // Save to database if logged in
         if (session?.user) {
           try {
-            const saveRes = await fetch("/api/ocr-results", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                fullText,
-                preview,
-                totalChars: fullText.length,
-                segmentsProcessed: segments.length,
-              }),
-            });
-            const saveData = await saveRes.json();
-            if (saveData.id) {
-              newResult.id = saveData.id;
-            }
+            newResult.id = await saveToDb(newResult);
           } catch {
-            // Non-critical: continue even if save fails
             console.error("Failed to save OCR result to database");
           }
         }
 
-        setResults((prev) => [...prev, newResult]);
-        setActiveIndex((prev) => (prev === 0 && results.length === 0 ? 0 : results.length));
+        const next = [...resultsRef.current, newResult];
+        setResults(next);
+        setActiveIndex(next.length - 1);
         setStatus("done");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unknown error");
         setStatus("error");
       }
     },
-    [lang, scene, session, results.length],
+    [busy, lang, scene, session, t.me, t.other, saveToDb],
   );
 
-  function mergeSegmentTexts(texts: string[]): string {
-    if (texts.length === 0) return "";
-    if (texts.length === 1) return texts[0].trim();
-
-    let merged = texts[0].trim();
-    for (let i = 1; i < texts.length; i++) {
-      const current = texts[i].trim();
-      if (!current) continue;
-
-      const prevLines = merged.split("\n");
-      const currLines = current.split("\n");
-
-      let bestOverlap = 0;
-      const maxCheck = Math.min(prevLines.length, currLines.length, 8);
-      for (let n = 1; n <= maxCheck; n++) {
-        const prevTail = prevLines
-          .slice(-n)
-          .map((l) => l.trim())
-          .join("\n");
-        const currHead = currLines
-          .slice(0, n)
-          .map((l) => l.trim())
-          .join("\n");
-        if (prevTail === currHead) {
-          bestOverlap = n;
-        }
-      }
-
-      const newLines = currLines.slice(bestOverlap);
-      if (newLines.length > 0) {
-        merged += "\n" + newLines.join("\n");
-      }
-    }
-    return merged;
-  }
+  // Re-apply a scene to the active result (no OCR needed — blocks are kept)
+  const applyScene = (s: Scene) => {
+    setScene(s);
+    if (!result || result.segments.length === 0) return;
+    const r = structure(result.segments, result.imageWidth, s, { me: t.me, other: t.other });
+    setResults((prev) =>
+      prev.map((x, i) =>
+        i === activeIndex
+          ? {
+              ...x,
+              scene: r.scene,
+              markdown: r.markdown,
+              plain: r.plain,
+              preview: previewOf(r.markdown, PREVIEW_RATIO),
+              total_blocks: r.paragraphs.length,
+            }
+          : x,
+      ),
+    );
+  };
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -287,8 +317,7 @@ function Home() {
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
-      const items = e.clipboardData.items;
-      for (const item of items) {
+      for (const item of e.clipboardData.items) {
         if (item.type.startsWith("image/")) {
           const file = item.getAsFile();
           if (file) handleFile(file);
@@ -299,46 +328,40 @@ function Home() {
     [handleFile],
   );
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const visibleMarkdown = result ? (result.isPaid ? result.markdown : result.preview) : "";
+
+  const copyToClipboard = async () => {
+    if (!result) return;
+    await navigator.clipboard.writeText(visibleMarkdown);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const downloadMarkdown = () => {
+    if (!result) return;
+    const blob = new Blob([visibleMarkdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = (result.name || "long2text").replace(/\.[a-z]+$/i, "") + ".md";
+    a.click();
+    URL.revokeObjectURL(url);
+    setResults((prev) => prev.map((r, i) => (i === activeIndex ? { ...r, isDownloaded: true } : r)));
   };
 
   const handleUnlock = async () => {
     if (!result) return;
-
-    // Not logged in → trigger Google sign in
     if (!session?.user) {
       signIn("google");
       return;
     }
-
     try {
       setError("");
-
-      // No database ID → need to save first
       let resultId = result.id;
       if (!resultId) {
-        const saveRes = await fetch("/api/ocr-results", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fullText: result.full_text,
-            preview: result.preview,
-            totalChars: result.total_chars,
-            segmentsProcessed: result.segments_processed,
-          }),
-        });
-        if (!saveRes.ok) {
-          throw new Error(`Save failed: ${saveRes.status}`);
-        }
-        const saveData = await saveRes.json();
-        resultId = saveData.id;
-        setResults((prev) =>
-          prev.map((r, i) => (i === activeIndex ? { ...r, id: resultId } : r)),
-        );
+        resultId = await saveToDb(result);
+        setResults((prev) => prev.map((r, i) => (i === activeIndex ? { ...r, id: resultId } : r)));
       }
-
-      // Create checkout session
       const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -349,85 +372,50 @@ function Home() {
         throw new Error(errData.error || `Checkout failed: ${res.status}`);
       }
       const data = await res.json();
-      if (data.url) {
-        window.location.href = data.url;
-      }
+      if (data.url) window.location.href = data.url;
     } catch (err) {
       console.error("Unlock error:", err);
       setError(err instanceof Error ? err.message : "Payment failed");
     }
   };
 
-  const markDownloaded = () => {
-    setResults((prev) =>
-      prev.map((r, i) =>
-        i === activeIndex ? { ...r, isDownloaded: true } : r,
-      ),
-    );
+  const openPicker = () => {
+    if (!busy) fileInputRef.current?.click();
   };
 
-  const scenes: { value: Scene; label: string; labelEn: string }[] = [
-    { value: "general", label: "通用", labelEn: "General" },
-    { value: "chat", label: "聊天记录", labelEn: "Chat" },
-    { value: "meeting", label: "会议记录", labelEn: "Meeting" },
-    { value: "article", label: "文章/长文", labelEn: "Article" },
-  ];
+  const sceneOrder: Scene[] = ["general", "chat", "meeting", "article"];
 
   return (
-    <div
-      className="min-h-screen bg-gradient-to-b from-slate-50 to-white"
-      onPaste={handlePaste}
-    >
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white" onPaste={handlePaste}>
       {/* Header */}
-      <header className="border-b border-slate-100 bg-white/80 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+      <header className="sticky top-0 z-10 border-b border-slate-100 bg-white/80 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-sm font-bold text-white">
-              L2T
-            </div>
-            <span className="text-lg font-semibold text-slate-900">
-              Long2Text
-            </span>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-sm font-bold text-white">L2T</div>
+            <span className="text-lg font-semibold text-slate-900">Long2Text</span>
           </div>
-          <nav className="flex items-center gap-4 text-sm text-slate-600">
-            <button
-              onClick={() => setLang(lang === "ch" ? "en" : "ch")}
-              className="rounded-md px-3 py-1 hover:bg-slate-100"
-            >
+          <nav className="flex items-center gap-2 text-sm text-slate-600 sm:gap-4">
+            <button onClick={() => setLang(lang === "ch" ? "en" : "ch")} className="rounded-md px-2 py-1 hover:bg-slate-100">
               {lang === "ch" ? "EN" : "中文"}
             </button>
             {session?.user ? (
               <>
-                <a
-                  href="/history"
-                  className="rounded-md px-3 py-1 hover:bg-slate-100"
-                >
+                <Link href="/history" className="rounded-md px-2 py-1 hover:bg-slate-100">
                   {lang === "ch" ? "历史记录" : "History"}
-                </a>
+                </Link>
                 <div className="flex items-center gap-2">
                   {session.user.image && (
-                    <img
-                      src={session.user.image}
-                      alt=""
-                      className="h-7 w-7 rounded-full"
-                    />
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={session.user.image} alt="" className="h-7 w-7 rounded-full" />
                   )}
-                  <span className="max-w-[120px] truncate text-sm">
-                    {session.user.name}
-                  </span>
-                  <button
-                    onClick={() => signOut()}
-                    className="rounded-md px-2 py-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                  >
+                  <span className="hidden max-w-[120px] truncate text-sm sm:inline">{session.user.name}</span>
+                  <button onClick={() => signOut()} className="rounded-md px-2 py-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-600">
                     {lang === "ch" ? "退出" : "Sign out"}
                   </button>
                 </div>
               </>
             ) : (
-              <button
-                onClick={() => signIn("google")}
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-              >
+              <button onClick={() => signIn("google")} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700">
                 {lang === "ch" ? "Google 登录" : "Sign in with Google"}
               </button>
             )}
@@ -435,258 +423,210 @@ function Home() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-12">
-        {/* Hero */}
-        <section className="mb-16 text-center">
-          <h1 className="mb-4 text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl">
-            {lang === "ch" ? (
-              <>
-                长截图转文字
-                <span className="text-indigo-600">专家</span>
-              </>
-            ) : (
-              <>
-                Long Screenshot to Text{" "}
-                <span className="text-indigo-600">Expert</span>
-              </>
-            )}
-          </h1>
-          <p className="mx-auto max-w-2xl text-lg text-slate-600">
-            {lang === "ch"
-              ? "上传长截图，一键转换为格式化文字。支持聊天记录、会议转写、长文章，输出 Markdown 格式。"
-              : "Upload long screenshots, convert to formatted text instantly. Chat records, meeting transcripts, articles. Markdown output."}
-          </p>
-        </section>
+      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-12">
+        {/* Hero — full when nothing has happened yet, compact afterwards */}
+        {results.length === 0 && status === "idle" ? (
+          <section className="mb-10 text-center">
+            <h1 className="mb-4 text-3xl font-bold tracking-tight text-slate-900 sm:text-5xl">
+              {lang === "ch" ? (
+                <>
+                  长截图 → 带结构的<span className="text-indigo-600">文字</span>
+                </>
+              ) : (
+                <>
+                  Long screenshot → <span className="text-indigo-600">structured</span> text
+                </>
+              )}
+            </h1>
+            <p className="mx-auto max-w-2xl text-base text-slate-600 sm:text-lg">
+              {lang === "ch"
+                ? "微信聊天、会议纪要、长文章截图，识别后自动合并段落、标出说话人和时间，输出可直接粘贴的 Markdown。"
+                : "Chat logs, meeting notes, long articles: recognized, merged into paragraphs, speakers and timestamps marked, exported as Markdown you can paste anywhere."}
+            </p>
+          </section>
+        ) : null}
 
-        {/* Scene Selector */}
-        <section className="mb-6 flex flex-wrap justify-center gap-2">
-          {scenes.map((s) => (
+        {/* Scene selector */}
+        <section className="mb-4 flex flex-wrap items-center justify-center gap-2">
+          <span className="text-xs text-slate-400">{lang === "ch" ? "排版方式" : "Layout"}</span>
+          {sceneOrder.map((s) => (
             <button
-              key={s.value}
-              onClick={() => setScene(s.value)}
-              className={`rounded-full px-4 py-2 text-sm font-medium transition-all ${
-                scene === s.value
-                  ? "bg-indigo-600 text-white shadow-md"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              key={s}
+              onClick={() => applyScene(s)}
+              className={`rounded-full px-3 py-1.5 text-sm font-medium transition-all ${
+                scene === s ? "bg-indigo-600 text-white shadow-md" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               }`}
             >
-              {lang === "ch" ? s.label : s.labelEn}
+              {t.scenes[s]}
             </button>
           ))}
         </section>
 
-        {/* Upload Zone */}
-        <section
-          className={`mb-8 rounded-2xl border-2 border-dashed p-12 text-center transition-all ${
-            dragActive
-              ? "border-indigo-500 bg-indigo-50"
-              : "border-slate-200 bg-white hover:border-slate-300"
-          } ${status === "idle" || status === "error" || status === "done" ? "cursor-pointer" : ""}`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragActive(true);
+        {/* Upload zone */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleFile(file);
+            e.target.value = "";
           }}
-          onDragLeave={() => setDragActive(false)}
-          onDrop={handleDrop}
-          onClick={() =>
-            (status === "idle" || status === "error" || status === "done") &&
-            fileInputRef.current?.click()
-          }
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) handleFile(file);
+        />
+        {status === "done" && result ? (
+          <section
+            className={`mb-6 flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-dashed px-4 py-3 text-sm transition-all ${
+              dragActive ? "border-indigo-500 bg-indigo-50" : "border-slate-300 bg-white hover:border-indigo-400"
+            }`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragActive(true);
             }}
-          />
-
-          {status === "idle" || status === "error" ? (
-            <>
-              <div className="mb-4 text-5xl">📸</div>
-              <p className="mb-2 text-lg font-medium text-slate-700">
-                {lang === "ch"
-                  ? "拖拽长截图到这里，或点击上传"
-                  : "Drop your long screenshot here, or click to upload"}
-              </p>
-              <p className="text-sm text-slate-400">
-                {lang === "ch"
-                  ? "也可以直接 Ctrl+V 粘贴截图 | 支持 PNG, JPG, WEBP"
-                  : "Or paste with Ctrl+V | PNG, JPG, WEBP supported"}
-              </p>
-              {error && (
-                <p className="mt-4 text-sm text-red-500">{error}</p>
-              )}
-            </>
-          ) : status === "splitting" ? (
-            <div className="flex flex-col items-center">
-              <div className="mb-4 h-12 w-12 animate-spin rounded-full border-4 border-indigo-200 border-t-indigo-600" />
-              <p className="text-lg font-medium text-slate-700">
-                {lang === "ch" ? "正在切分图片..." : "Splitting image..."}
-              </p>
-              <p className="text-sm text-slate-400">
-                {lang === "ch"
-                  ? "在浏览器中智能切分长图"
-                  : "Smart splitting in your browser"}
-              </p>
-            </div>
-          ) : status === "processing" ? (
-            <div className="flex flex-col items-center">
-              <div className="mb-4 h-12 w-12 animate-spin rounded-full border-4 border-indigo-200 border-t-indigo-600" />
-              <p className="text-lg font-medium text-slate-700">
-                {lang === "ch"
-                  ? `正在识别中 (${progress.current}/${progress.total})...`
-                  : `Recognizing (${progress.current}/${progress.total})...`}
-              </p>
-              {progress.total > 0 && (
-                <div className="mt-3 h-2 w-64 overflow-hidden rounded-full bg-slate-200">
-                  <div
-                    className="h-full rounded-full bg-indigo-600 transition-all duration-300"
-                    style={{
-                      width: `${(progress.current / progress.total) * 100}%`,
-                    }}
-                  />
+            onDragLeave={() => setDragActive(false)}
+            onDrop={handleDrop}
+            onClick={openPicker}
+          >
+            <span className="text-slate-600">
+              <span className="mr-2 font-semibold text-indigo-600">＋</span>
+              {lang === "ch" ? "转换另一张图片（点击、拖拽或 Ctrl+V 粘贴）" : "Convert another image (click, drop, or paste)"}
+            </span>
+            {error && <span className="text-red-500">{error}</span>}
+          </section>
+        ) : busy ? (
+          <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-4">
+              {previewUrl && (
+                <div className="h-24 w-16 shrink-0 overflow-hidden rounded-md border border-slate-200">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={previewUrl} alt="" className="h-full w-full object-cover object-top" />
                 </div>
               )}
-              <p className="mt-2 text-sm text-slate-400">
-                {lang === "ch"
-                  ? "逐段识别后智能合并"
-                  : "Recognizing each segment, then merging"}
-              </p>
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-slate-800">
+                  {status === "splitting"
+                    ? lang === "ch"
+                      ? "正在切分图片…"
+                      : "Splitting image…"
+                    : lang === "ch"
+                      ? `正在识别第 ${live.current + 1 > live.total ? live.total : live.current + 1} / ${live.total} 段`
+                      : `Recognizing segment ${Math.min(live.current + 1, live.total)} / ${live.total}`}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {live.etaSec !== null && live.etaSec > 0
+                    ? lang === "ch"
+                      ? `预计还需 ${live.etaSec} 秒 · 识别引擎限 1 段/秒，长图请稍候`
+                      : `About ${live.etaSec}s left · the OCR engine allows 1 segment/s`
+                    : lang === "ch"
+                      ? "长图会被切成多段逐段识别，识别到的内容会实时显示在下方"
+                      : "Long images are split into segments; recognized text appears below as it arrives"}
+                </p>
+                {live.total > 0 && (
+                  <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                    <div className="h-full rounded-full bg-indigo-600 transition-all duration-300" style={{ width: `${(live.current / live.total) * 100}%` }} />
+                  </div>
+                )}
+              </div>
             </div>
-          ) : status === "done" ? (
-            <>
-              <div className="mb-2 text-3xl">📸</div>
-              <p className="text-sm font-medium text-slate-500">
-                {lang === "ch"
-                  ? "点击或拖拽上传另一张图片"
-                  : "Click or drop to convert another image"}
-              </p>
-            </>
-          ) : null}
-        </section>
-
-        {/* Image Preview */}
-        {previewUrl && (status === "splitting" || status === "processing") && (
-          <section className="mb-8 flex justify-center">
-            <div className="max-h-64 overflow-hidden rounded-xl border border-slate-200 shadow-sm">
-              <img
-                src={previewUrl}
-                alt="Uploaded screenshot"
-                className="h-full max-h-64 w-auto object-cover object-top"
-              />
-            </div>
+            {live.markdown && (
+              <div className="mt-5 max-h-80 overflow-hidden border-t border-slate-100 pt-4 [mask-image:linear-gradient(to_bottom,black_70%,transparent)]">
+                <MarkdownView markdown={live.markdown} />
+              </div>
+            )}
           </section>
-        )}
-
-        {/* Results tabs (when multiple) */}
-        {results.length > 1 && (
-          <section className="mb-4 flex gap-2 overflow-x-auto">
-            {results.map((r, i) => (
-              <button
-                key={i}
-                onClick={() => setActiveIndex(i)}
-                className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
-                  i === activeIndex
-                    ? "bg-indigo-600 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                {lang === "ch" ? `结果 ${i + 1}` : `Result ${i + 1}`}
-                {r.isPaid && " ✓"}
-              </button>
-            ))}
+        ) : (
+          <section
+            className={`mb-8 cursor-pointer rounded-2xl border-2 border-dashed p-10 text-center transition-all sm:p-14 ${
+              dragActive ? "border-indigo-500 bg-indigo-50" : "border-slate-200 bg-white hover:border-slate-300"
+            }`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={handleDrop}
+            onClick={openPicker}
+          >
+            <div className="mb-4 text-5xl">📸</div>
+            <p className="mb-2 text-lg font-medium text-slate-700">
+              {lang === "ch" ? "拖拽长截图到这里，或点击上传" : "Drop your long screenshot here, or click to upload"}
+            </p>
+            <p className="text-sm text-slate-400">{lang === "ch" ? "也可以直接 Ctrl+V 粘贴截图 · PNG / JPG / WEBP · 图片不会被保存" : "Or paste with Ctrl+V · PNG / JPG / WEBP · images are never stored"}</p>
+            {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
           </section>
         )}
 
         {/* Results */}
-        {result && (status === "done" || results.length > 0) && (
+        {result && (status === "done" || results.length > 0) && !busy && (
           <section className="mb-16">
+            {results.length > 1 && (
+              <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+                {results.map((r, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setActiveIndex(i)}
+                    className={`shrink-0 rounded-lg px-3 py-1.5 text-sm transition-all ${
+                      i === activeIndex ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                    title={r.name}
+                  >
+                    <span className="font-medium">{i + 1}.</span> {r.plain.replace(/\s+/g, " ").slice(0, 12)}…{r.isPaid && r.total_chars > FREE_CHARS && " ✓"}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Stats bar */}
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-xl bg-slate-50 px-6 py-3">
-              <div className="flex gap-6 text-sm text-slate-500">
-                <span>
-                  {result.total_chars}{" "}
-                  {lang === "ch" ? "字" : "chars"}
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-3 sm:px-6">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-500">
+                <span className="rounded-md bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                  {lang === "ch" ? `识别为${t.sceneDetected[result.scene]}` : `Detected: ${t.sceneDetected[result.scene]}`}
                 </span>
                 <span>
-                  {result.total_lines}{" "}
-                  {lang === "ch" ? "行" : "lines"}
+                  {result.total_chars} {lang === "ch" ? "字" : "chars"}
                 </span>
                 <span>
-                  {result.segments_processed}{" "}
-                  {lang === "ch" ? "段处理" : "segments"}
+                  {result.total_blocks} {t.units[result.scene]}
                 </span>
+                <span>
+                  {result.segments_processed} {lang === "ch" ? "段" : "segments"}
+                </span>
+                {result.failed_segments.length > 0 && (
+                  <span className="text-amber-600">
+                    {lang === "ch" ? `第 ${result.failed_segments.join("、")} 段识别失败` : `Segment ${result.failed_segments.join(", ")} failed`}
+                  </span>
+                )}
               </div>
               <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    const text = result.isPaid
-                      ? result.full_text
-                      : result.preview;
-                    copyToClipboard(text);
-                  }}
-                  className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-300"
-                >
-                  {lang === "ch" ? "复制文字" : "Copy Text"}
+                <button onClick={copyToClipboard} className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-300">
+                  {copied ? (lang === "ch" ? "已复制" : "Copied") : result.isPaid ? (lang === "ch" ? "复制 Markdown" : "Copy Markdown") : lang === "ch" ? "复制预览" : "Copy preview"}
                 </button>
-                <button
-                  onClick={() => {
-                    const text = result.isPaid
-                      ? result.full_text
-                      : result.preview;
-                    const blob = new Blob([text], { type: "text/markdown" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = "long2text-result.md";
-                    a.click();
-                    markDownloaded();
-                  }}
-                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-                >
-                  {lang === "ch" ? "下载 Markdown" : "Download .md"}
+                <button onClick={downloadMarkdown} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+                  {result.isPaid ? (lang === "ch" ? "下载 .md" : "Download .md") : lang === "ch" ? "下载预览 .md" : "Download preview"}
                 </button>
               </div>
             </div>
 
             {/* Text result */}
-            <div className="relative rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-slate-800">
-                {result.isPaid ? result.full_text : result.preview}
-              </pre>
+            <div className="relative rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+              <MarkdownView markdown={visibleMarkdown} />
 
-              {/* Paywall overlay */}
-              {!result.isPaid && result.total_chars > 500 && (
-                <div className="absolute inset-x-0 bottom-0 flex flex-col items-center rounded-b-xl bg-gradient-to-t from-white via-white/95 to-transparent pb-8 pt-32">
-                  <p className="mb-4 text-center text-lg font-semibold text-slate-800">
+              {/* Paywall */}
+              {!result.isPaid && result.total_chars > FREE_CHARS && (
+                <div className="absolute inset-x-0 bottom-0 flex flex-col items-center rounded-b-xl bg-gradient-to-t from-white via-white/95 to-transparent px-4 pb-8 pt-28">
+                  <p className="mb-1 text-center text-lg font-semibold text-slate-800">
                     {lang === "ch"
-                      ? `完整内容共 ${result.total_chars} 字，解锁查看全部`
-                      : `Full content: ${result.total_chars} chars. Unlock to see all.`}
+                      ? `以上是前 ${Math.round(PREVIEW_RATIO * 100)}%，全文共 ${result.total_chars} 字、${result.total_blocks} ${t.units[result.scene]}`
+                      : `That's the first ${Math.round(PREVIEW_RATIO * 100)}% — full result: ${result.total_chars} chars, ${result.total_blocks} ${t.units[result.scene]}`}
                   </p>
-                  <button
-                    onClick={handleUnlock}
-                    className="rounded-xl bg-indigo-600 px-8 py-3 text-base font-semibold text-white shadow-lg transition-all hover:bg-indigo-700 hover:shadow-xl"
-                  >
-                    {!session?.user
-                      ? lang === "ch"
-                        ? "登录后解锁 - $0.99"
-                        : "Sign in to Unlock - $0.99"
-                      : lang === "ch"
-                        ? "解锁完整结果 - $0.99"
-                        : "Unlock Full Result - $0.99"}
+                  <p className="mb-4 text-center text-sm text-slate-500">
+                    {lang === "ch" ? "已合并段落、标出说话人和时间；解锁后可复制、下载 Markdown，并保存到历史记录" : "Paragraphs merged, speakers and timestamps marked. Unlock to copy, download Markdown, and keep it in your history"}
+                  </p>
+                  <button onClick={handleUnlock} className="rounded-xl bg-indigo-600 px-8 py-3 text-base font-semibold text-white shadow-lg transition-all hover:bg-indigo-700 hover:shadow-xl">
+                    {!session?.user ? (lang === "ch" ? "登录后解锁 · $0.99" : "Sign in to unlock · $0.99") : lang === "ch" ? "解锁全文 · $0.99" : "Unlock full result · $0.99"}
                   </button>
-                  {error && (
-                    <p className="mt-2 text-sm text-red-500">{error}</p>
-                  )}
-                  <p className="mt-2 text-xs text-slate-400">
-                    {lang === "ch"
-                      ? "单次购买 | 安全支付"
-                      : "One-time purchase | Secure payment"}
-                  </p>
+                  {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
+                  <p className="mt-2 text-xs text-slate-400">{lang === "ch" ? "单张图片一次性购买 · Stripe 安全支付" : "One-time purchase per image · Secure payment by Stripe"}</p>
                 </div>
               )}
             </div>
@@ -694,37 +634,25 @@ function Home() {
         )}
 
         {/* Features */}
-        <section className="mb-16 grid gap-8 sm:grid-cols-3">
+        <section className="mb-16 grid gap-6 sm:grid-cols-3">
           {[
             {
-              icon: "📏",
-              title: lang === "ch" ? "长图专家" : "Long Image Expert",
-              desc:
-                lang === "ch"
-                  ? "智能切分超长截图，逐段识别后无缝合并，告别文字丢失"
-                  : "Smart splitting of ultra-long screenshots with seamless merging",
+              icon: "🧩",
+              title: lang === "ch" ? "切分后无缝合并" : "Split, then merged seamlessly",
+              desc: lang === "ch" ? "超长图自动切段识别，按位置去重，切口处不丢字、不重复" : "Ultra-long images are recognized in segments and de-duplicated by position, so seams lose nothing",
             },
             {
               icon: "💬",
-              title: lang === "ch" ? "场景优化" : "Scene Optimized",
-              desc:
-                lang === "ch"
-                  ? "聊天记录、会议转写、文章长文，针对不同场景优化识别和排版"
-                  : "Chat, meeting, article modes with tailored recognition & formatting",
+              title: lang === "ch" ? "还原段落与说话人" : "Paragraphs and speakers restored",
+              desc: lang === "ch" ? "换行合并成自然段；聊天记录标出谁说的、什么时候说的" : "Visual line breaks become paragraphs; chats get speaker and timestamp labels",
             },
             {
               icon: "📝",
-              title: lang === "ch" ? "Markdown 输出" : "Markdown Output",
-              desc:
-                lang === "ch"
-                  ? "输出结构化 Markdown，保留格式、标题、列表、对话结构"
-                  : "Structured Markdown output preserving headings, lists, and layout",
+              title: lang === "ch" ? "真正的 Markdown" : "Real Markdown",
+              desc: lang === "ch" ? "标题、说话人、时间戳、列表都是 Markdown 标记，直接粘进笔记" : "Headings, speakers, timestamps and lists as Markdown, ready to paste into your notes",
             },
           ].map((f) => (
-            <div
-              key={f.title}
-              className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm"
-            >
+            <div key={f.title} className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm">
               <div className="mb-3 text-3xl">{f.icon}</div>
               <h3 className="mb-2 font-semibold text-slate-900">{f.title}</h3>
               <p className="text-sm leading-relaxed text-slate-500">{f.desc}</p>
@@ -734,19 +662,15 @@ function Home() {
 
         {/* Pricing */}
         <section id="pricing" className="mb-16">
-          <h2 className="mb-8 text-center text-2xl font-bold text-slate-900">
-            {lang === "ch" ? "简单定价" : "Simple Pricing"}
-          </h2>
+          <h2 className="mb-8 text-center text-2xl font-bold text-slate-900">{lang === "ch" ? "简单定价" : "Simple pricing"}</h2>
           <div className="mx-auto grid max-w-2xl gap-6 sm:grid-cols-2">
             <div className="rounded-xl border border-slate-100 bg-white p-6">
-              <h3 className="mb-1 text-lg font-semibold text-slate-900">
-                {lang === "ch" ? "免费" : "Free"}
-              </h3>
+              <h3 className="mb-1 text-lg font-semibold text-slate-900">{lang === "ch" ? "免费" : "Free"}</h3>
               <p className="mb-4 text-2xl font-bold text-indigo-600">$0</p>
               <ul className="space-y-2">
                 {(lang === "ch"
-                  ? ["无限次转换", "短文完整结果（≤500字）", "长文预览前20%"]
-                  : ["Unlimited conversions", "Full result for short texts (≤500 chars)", "Preview first 20% for long texts"]
+                  ? ["不限次数", `${FREE_CHARS} 字以内的图片：完整结果`, `更长的图片：前 ${Math.round(PREVIEW_RATIO * 100)}%（已排版）预览`]
+                  : ["Unlimited conversions", `Full result for images under ${FREE_CHARS} chars`, `First ${Math.round(PREVIEW_RATIO * 100)}% (formatted) for longer images`]
                 ).map((f) => (
                   <li key={f} className="flex items-start gap-2 text-sm text-slate-600">
                     <span className="text-green-500">&#10003;</span>
@@ -756,14 +680,12 @@ function Home() {
               </ul>
             </div>
             <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-6 shadow-md">
-              <h3 className="mb-1 text-lg font-semibold text-slate-900">
-                {lang === "ch" ? "解锁完整结果" : "Unlock Full Result"}
-              </h3>
+              <h3 className="mb-1 text-lg font-semibold text-slate-900">{lang === "ch" ? "解锁全文" : "Unlock full result"}</h3>
               <p className="mb-4 text-2xl font-bold text-indigo-600">$0.99</p>
               <ul className="space-y-2">
                 {(lang === "ch"
-                  ? ["单张图片完整结果", "无需订阅，即买即用", "支持复制和下载 Markdown"]
-                  : ["Full result for one image", "No subscription needed", "Copy & download Markdown"]
+                  ? ["单张图片全文，按次购买，无订阅", "复制 / 下载 Markdown", "保存在历史记录，随时找回"]
+                  : ["Full result for one image, no subscription", "Copy / download Markdown", "Kept in your history"]
                 ).map((f) => (
                   <li key={f} className="flex items-start gap-2 text-sm text-slate-600">
                     <span className="text-green-500">&#10003;</span>
@@ -775,70 +697,30 @@ function Home() {
           </div>
         </section>
 
-        {/* SEO Content */}
-        <section className="mb-16 rounded-xl bg-slate-50 p-8">
-          <h2 className="mb-4 text-xl font-bold text-slate-900">
-            {lang === "ch"
-              ? "为什么选择 Long2Text？"
-              : "Why Long2Text?"}
-          </h2>
-          <div className="space-y-3 text-sm leading-relaxed text-slate-600">
-            {lang === "ch" ? (
-              <>
-                <p>
-                  普通的OCR工具在处理超长截图时会出现文字丢失、乱码、格式混乱等问题。Long2Text
-                  专门针对长截图场景进行了优化——通过智能切分和重叠识别技术，确保每一个字都不会遗漏。
-                </p>
-                <p>
-                  无论是微信聊天记录截图、飞书妙记会议截图、小红书长图文章，还是任何超长的屏幕截图，Long2Text
-                  都能准确识别并输出格式化的 Markdown 文本，保留原始的对话结构和排版。
-                </p>
-              </>
-            ) : (
-              <>
-                <p>
-                  Regular OCR tools struggle with ultra-long screenshots —
-                  missing text, garbled output, broken formatting. Long2Text is
-                  purpose-built for long screenshots using smart splitting and
-                  overlap technology to ensure every character is captured.
-                </p>
-                <p>
-                  Whether it&apos;s chat history screenshots, meeting transcript
-                  captures, or long article screenshots, Long2Text accurately
-                  recognizes and outputs formatted Markdown while preserving the
-                  original structure.
-                </p>
-              </>
-            )}
-          </div>
-        </section>
-
         {/* FAQ */}
         <section className="mb-16">
-          <h2 className="mb-8 text-center text-2xl font-bold text-slate-900">
-            {lang === "ch" ? "常见问题" : "FAQ"}
-          </h2>
+          <h2 className="mb-8 text-center text-2xl font-bold text-slate-900">{lang === "ch" ? "常见问题" : "FAQ"}</h2>
           <div className="mx-auto max-w-3xl space-y-4">
             {(lang === "ch"
               ? [
-                  ["支持多长的截图？", "理论上无限长。Long2Text 会自动将超长截图切分为多个小段，逐段识别后智能合并，确保不丢字。"],
-                  ["支持哪些语言？", "支持中文、英文以及中英混合文本。其他语言也有基本支持。"],
-                  ["免费版有什么限制？", "免费版没有次数限制。500字以内的短文结果完全免费。超过500字的长文需要支付 $0.99 解锁完整结果。"],
-                  ["我的图片数据安全吗？", "图片仅在识别过程中使用，不会被存储。识别完成后图片即被丢弃。"],
-                  ["支持哪些图片格式？", "支持 PNG、JPG、WEBP 格式。你可以拖拽上传、点击上传，或直接 Ctrl+V 粘贴截图。"],
+                  ["支持多长的截图？", "没有上限。图片在你的浏览器里被切成多段，逐段识别后按位置合并，切口处不会丢字。上百段的超长图也能处理，只是需要多等一会儿。"],
+                  ["「排版方式」是做什么的？", "自动模式会根据版面判断是聊天记录、会议记录还是文章。聊天记录会标出说话人和时间；文章会识别标题并合并段落。识别完成后可以随时切换，不需要重新上传。"],
+                  ["为什么长图要等这么久？", "识别引擎限制每秒 1 段。识别到的内容会实时显示，不用等全部完成。"],
+                  ["支持哪些语言？", "中文、英文以及中英混排效果最好，其他语言有基本支持。"],
+                  ["我的图片安全吗？", "图片只在识别过程中经过服务器，不会被保存。登录后识别出的文字会保存在你的历史记录里，只有你能看到。"],
+                  ["免费和付费的区别？", `${FREE_CHARS} 字以内的图片完全免费。更长的图片免费看前 ${Math.round(PREVIEW_RATIO * 100)}%，付 $0.99 解锁这一张的全文。`],
                 ]
               : [
-                  ["How long can the screenshot be?", "Virtually unlimited. Long2Text automatically splits ultra-long screenshots into segments, recognizes each one, and merges them seamlessly."],
-                  ["What languages are supported?", "Chinese, English, and mixed Chinese-English text are fully supported. Other languages have basic support."],
-                  ["What are the free tier limits?", "No daily limit on conversions. Short texts (under 500 characters) are completely free. Longer texts require a $0.99 one-time payment to unlock the full result."],
-                  ["Is my image data safe?", "Images are only used during the recognition process and are not stored. They are discarded immediately after processing."],
-                  ["What image formats are supported?", "PNG, JPG, and WEBP. You can drag & drop, click to upload, or paste with Ctrl+V."],
+                  ["How long can the screenshot be?", "No limit. The image is split in your browser, each segment is recognized, and the pieces are merged by position so nothing is lost at the seams."],
+                  ["What does “Layout” do?", "Auto detects whether the image is a chat, a meeting transcript, or an article. Chats get speaker and timestamp labels; articles get headings and merged paragraphs. You can switch after recognition without re-uploading."],
+                  ["Why does a long image take a while?", "The OCR engine allows one segment per second. Recognized text is shown as it arrives, so you don't have to wait for the end."],
+                  ["Which languages are supported?", "Chinese, English and mixed text work best; other languages have basic support."],
+                  ["Is my image safe?", "Images pass through the server only during recognition and are never stored. If you sign in, the recognized text is kept in your private history."],
+                  ["Free vs paid?", `Images under ${FREE_CHARS} characters are free. Longer images show the first ${Math.round(PREVIEW_RATIO * 100)}% for free; $0.99 unlocks the full result for that image.`],
                 ]
             ).map(([q, a]) => (
               <details key={q} className="group rounded-xl border border-slate-200 bg-white">
-                <summary className="cursor-pointer px-6 py-4 text-sm font-medium text-slate-900 hover:bg-slate-50">
-                  {q}
-                </summary>
+                <summary className="cursor-pointer px-6 py-4 text-sm font-medium text-slate-900 hover:bg-slate-50">{q}</summary>
                 <p className="px-6 pb-4 text-sm leading-relaxed text-slate-600">{a}</p>
               </details>
             ))}
@@ -846,7 +728,6 @@ function Home() {
         </section>
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-slate-100 bg-white py-8">
         <div className="mx-auto max-w-5xl px-6 text-center text-sm text-slate-400">
           <p>&copy; 2026 Long2Text. All rights reserved.</p>
