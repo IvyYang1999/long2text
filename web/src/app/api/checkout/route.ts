@@ -4,6 +4,8 @@ import { getStripe } from "@/lib/stripe";
 import { db } from "@/lib/db";
 import { purchases } from "@/lib/db/schema";
 
+export const preferredRegion = "sfo1";
+
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
