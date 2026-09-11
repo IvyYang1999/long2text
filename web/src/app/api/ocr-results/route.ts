@@ -72,3 +72,22 @@ export async function GET() {
 
   return NextResponse.json(resultsWithPayment);
 }
+
+// Update the text of one of the user's own results (after AI correction / undo)
+export async function PATCH(request: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+  const { id, fullText, preview, totalChars } = await request.json();
+  if (typeof id !== "string" || typeof fullText !== "string" || typeof preview !== "string" || typeof totalChars !== "number") {
+    return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+  }
+  const updated = await db
+    .update(ocrResults)
+    .set({ fullText, preview, totalChars })
+    .where(and(eq(ocrResults.id, id), eq(ocrResults.userId, session.user.id)))
+    .returning({ id: ocrResults.id });
+  if (updated.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json({ ok: true });
+}
