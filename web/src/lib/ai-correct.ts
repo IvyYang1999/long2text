@@ -7,9 +7,10 @@ import { isTimestamp, type Line } from "./structure";
 import { LIMITS } from "./correct-contract";
 
 export const LOW_CONFIDENCE = 95;
-export const MAX_CANDIDATES = 24;
-export const CONCURRENCY = 12;
-export const REQUEST_TIMEOUT_MS = 10_000; // a slow answer is dropped, the OCR text stays
+export const MAX_CANDIDATES = 16; // one round: the whole AI pass is bounded by REQUEST_TIMEOUT_MS
+export const CONCURRENCY = 16;
+export const REQUEST_TIMEOUT_MS = 14_000; // after this the OCR text stays
+export const HEDGE_AFTER_MS = 5_000; // send a duplicate request if the first is slower than this
 const JUNK_CONFIDENCE = 50; // below this the line is usually icon/emoji noise the model cannot fix
 export const MAX_CONFLICTS = 15; // high-confidence lines pulled in by document-wide conflicts
 
@@ -165,30 +166,63 @@ export function charCounts(text: string): Map<string, number> {
 
 type Outcome = { status: "ok"; text: string; changed: boolean } | { status: "unavailable" } | { status: "failed" };
 
-async function correctOne(c: Candidate, signal?: AbortSignal): Promise<Outcome> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-      const res = await fetch("/api/correct", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ context: c.context, text: c.text, confidence: c.confidence }),
-        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-      });
-      if (res.status === 503) return { status: "unavailable" };
-      if (res.status === 429 || res.status >= 500) {
-        await new Promise((r) => setTimeout(r, 2500));
-        continue;
-      }
-      if (!res.ok) return { status: "failed" };
-      const data = await res.json();
-      if (typeof data.text !== "string") return { status: "failed" };
-      return { status: "ok", text: data.text, changed: !!data.changed && data.text !== c.text };
-    } catch {
-      return { status: "failed" }; // timeout or network: keep the OCR text, don't retry
-    }
+async function requestOnce(c: Candidate, signal: AbortSignal): Promise<Outcome> {
+  try {
+    const res = await fetch("/api/correct", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context: c.context, text: c.text, confidence: c.confidence }),
+      signal,
+    });
+    if (res.status === 503) return { status: "unavailable" };
+    if (!res.ok) return { status: "failed" };
+    const data = await res.json();
+    if (typeof data.text !== "string") return { status: "failed" };
+    return { status: "ok", text: data.text, changed: !!data.changed && data.text !== c.text };
+  } catch {
+    return { status: "failed" };
   }
-  return { status: "failed" };
+}
+
+/**
+ * One candidate with a hedged request: if the first call has not answered
+ * after HEDGE_AFTER_MS (or fails fast), a duplicate is sent and the first
+ * answer wins. The model's latency has a long tail (p50 ≈ 4 s, a few > 10 s),
+ * so this keeps the whole pass short without dropping the slow lines.
+ * Gives up after REQUEST_TIMEOUT_MS and keeps the OCR text.
+ */
+function correctOne(c: Candidate, outer?: AbortSignal): Promise<Outcome> {
+  return new Promise((resolve) => {
+    const ctrls: AbortController[] = [];
+    let settled = false;
+    let launched = 0;
+    let pending = 0;
+    const finish = (o: Outcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(overall);
+      clearTimeout(hedge);
+      ctrls.forEach((k) => k.abort());
+      resolve(o);
+    };
+    const launch = () => {
+      if (settled || launched >= 2) return;
+      launched++;
+      pending++;
+      const k = new AbortController();
+      ctrls.push(k);
+      requestOnce(c, k.signal).then((o) => {
+        pending--;
+        if (o.status !== "failed") return finish(o);
+        if (launched < 2) return launch(); // failed fast: hedge right away
+        if (pending === 0) finish(o);
+      });
+    };
+    const overall = setTimeout(() => finish({ status: "failed" }), REQUEST_TIMEOUT_MS);
+    const hedge = setTimeout(launch, HEDGE_AFTER_MS);
+    outer?.addEventListener("abort", () => finish({ status: "failed" }), { once: true });
+    launch();
+  });
 }
 
 /**
