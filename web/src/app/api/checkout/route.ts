@@ -12,7 +12,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  const { ocrResultId } = await request.json();
+  const { ocrResultId, returnPath } = await request.json();
+  const back = returnPath === "/zh" ? "/zh" : "/";
   if (!ocrResultId) {
     return NextResponse.json(
       { error: "ocrResultId required" },
@@ -41,8 +42,8 @@ export async function POST(request: NextRequest) {
         userId: session.user.id,
         ocrResultId,
       },
-      success_url: `${origin}?paid=${ocrResultId}&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}?canceled=true`,
+      success_url: `${origin}${back}?paid=${ocrResultId}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}${back}?canceled=true`,
     });
 
     // Create pending purchase record
