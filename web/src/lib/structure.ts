@@ -25,6 +25,8 @@ export interface SegmentResult {
 }
 
 export interface Line {
+  id: string; // "<segment index>:<block index>" — stable key for corrections
+  conf: number; // OCR engine confidence 0-100
   text: string;
   x: number;
   y: number; // global top
@@ -158,7 +160,7 @@ function estimateLineHeight(blocks: { y: number; height?: number }[]): number {
  * duplicates that come from the overlap zone between consecutive segments
  * and dropping lines that were cut by a segment edge.
  */
-export function mergeSegments(segments: SegmentResult[]): Line[] {
+export function mergeSegments(segments: SegmentResult[], corrections?: Map<string, string>): Line[] {
   const sorted = [...segments].sort((a, b) => a.index - b.index);
   const all = sorted.flatMap((s) => s.blocks.map((b) => ({ y: b.y + s.yStart, height: b.height })));
   const lh = estimateLineHeight(all);
@@ -170,7 +172,9 @@ export function mergeSegments(segments: SegmentResult[]): Line[] {
     const isFirst = i === 0;
     const isLast = i === sorted.length - 1;
     let lines: Line[] = seg.blocks
-      .map((b) => ({
+      .map((b, bi) => ({
+        id: `${seg.index}:${bi}`,
+        conf: b.confidence ?? 100,
         text: b.text,
         x: b.x,
         y: b.y + seg.yStart,
@@ -226,7 +230,11 @@ export function mergeSegments(segments: SegmentResult[]): Line[] {
     kept.push(lines);
   }
 
-  const merged = kept.flat();
+  // Corrections are applied only after de-duplication so they cannot change which copy survives
+  const merged = kept.flat().map((l) => {
+    const c = corrections?.get(l.id);
+    return c !== undefined ? { ...l, text: c } : l;
+  });
   merged.sort((a, b) => (Math.abs(a.y - b.y) <= lh * 0.4 ? a.x - b.x : a.y - b.y));
   return merged;
 }
@@ -507,8 +515,9 @@ export function structure(
   imageWidth: number,
   scene: Scene = "general",
   labels: { me: string; other: string } = { me: "我", other: "对方" },
+  corrections?: Map<string, string>,
 ): StructuredResult {
-  const lines = mergeSegments(segments);
+  const lines = mergeSegments(segments, corrections);
   const { paragraphs, lh } = buildParagraphs(lines, imageWidth);
   const detected: DetectedScene = scene === "general" ? detectScene(paragraphs) : scene;
   let markdown: string;
