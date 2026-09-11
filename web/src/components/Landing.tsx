@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Dict } from "@/lib/i18n";
+import { CONTACT_EMAIL, type Dict } from "@/lib/i18n";
 import { IconSlices, IconBolt, IconDoc, IconChat, IconMeeting, IconArticle, IconCheck, IconLock } from "@/components/Icons";
 import { Wordmark } from "@/components/Logo";
 
@@ -128,6 +128,9 @@ export function SiteFooter({ d }: { d: Dict }) {
           <Link href={`${base}/terms`} className="hover:text-ink">
             {d.footer.terms}
           </Link>
+          <a href={`mailto:${CONTACT_EMAIL}`} className="hover:text-ink">
+            {d.footer.contact}
+          </a>
           <Link href={d.other.href} hrefLang={d.other.hreflang} className="hover:text-ink">
             {d.other.label}
           </Link>

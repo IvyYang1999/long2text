@@ -27,7 +27,7 @@ export function ogImage() {
           <div style={{ display: "flex", flexDirection: "column" }}>
             <div style={{ fontSize: 68, fontWeight: 800, color: "#0d1321", letterSpacing: -2, lineHeight: 1.05 }}>Long screenshots</div>
             <div style={{ fontSize: 68, fontWeight: 800, color: "#3355ff", letterSpacing: -2, lineHeight: 1.05 }}>to clean text.</div>
-            <div style={{ fontSize: 28, color: "#5a6376", marginTop: 24 }}>Chats · meeting notes · articles — free, in seconds</div>
+            <div style={{ fontSize: 28, color: "#5a6376", marginTop: 24 }}>Chats · meeting notes · articles — free to try</div>
           </div>
         </div>
         <div style={{ width: 360, display: "flex", flexDirection: "column", gap: 18, background: "#f6f7f9", borderRadius: 28, padding: 32, justifyContent: "center" }}>

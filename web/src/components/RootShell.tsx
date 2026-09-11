@@ -1,10 +1,19 @@
 import Script from "next/script";
-import { Geist, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { SessionProvider } from "next-auth/react";
 import "@/app/globals.css";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+// Geist (SIL OFL) variable fonts, self-hosted so builds never depend on Google Fonts
+const geistSans = localFont({
+  variable: "--font-geist-sans",
+  src: [{ path: "../fonts/geist-latin.woff2", weight: "100 900", style: "normal" }],
+  display: "swap",
+});
+const geistMono = localFont({
+  variable: "--font-geist-mono",
+  src: [{ path: "../fonts/geist-mono-latin.woff2", weight: "100 900", style: "normal" }],
+  display: "swap",
+});
 
 /** <html>/<body> shared by the English and Chinese root layouts. */
 export default function RootShell({ lang, children }: { lang: string; children: React.ReactNode }) {

@@ -2,6 +2,7 @@
 export type Locale = "en" | "zh";
 
 export const FREE_CHARS = 500;
+export const CONTACT_EMAIL = "support@long2text.com";
 export const PREVIEW_PERCENT = 30;
 
 const en = {
@@ -12,15 +13,15 @@ const en = {
   meta: {
     title: "Long Screenshot to Text — Free OCR for Chats, Meetings & Articles | Long2Text",
     description:
-      "Convert long screenshots into clean, copyable text. Long2Text splits tall images, reads them in parallel and rebuilds paragraphs, speakers and timestamps. Free, no sign-up, images never stored.",
+      "Convert long screenshots into clean, copyable text. Long2Text splits tall images, reads them in parallel and rebuilds paragraphs, speakers and timestamps. Free to try, results in about 15 seconds, images never stored.",
     ogTitle: "Long2Text — long screenshots to clean text",
   },
   nav: { how: "How it works", pricing: "Pricing", faq: "FAQ", history: "History", signIn: "Sign in", signOut: "Sign out" },
   hero: {
-    eyebrow: "Free · No sign-up · Images never stored",
+    eyebrow: "Free to try · Images never stored · Results in ~15 seconds",
     title1: "Turn long screenshots",
     title2: "into clean text",
-    sub: "Chat logs, meeting notes and long articles — split, read and stitched back into paragraphs with speakers and timestamps. In seconds.",
+    sub: "Chat logs, meeting notes and long articles — split, read and stitched back into paragraphs with speakers and timestamps. Usually in under 20 seconds.",
   },
   upload: {
     button: "Upload screenshot",
@@ -135,7 +136,7 @@ const en = {
       ["Is it free?", `Images under ${FREE_CHARS} characters are completely free. For longer ones you see the first ${PREVIEW_PERCENT}% for free and can unlock that image for $0.99.`],
     ] as [string, string][],
   },
-  footer: { privacy: "Privacy", terms: "Terms", history: "History", rights: "All rights reserved." },
+  footer: { privacy: "Privacy", terms: "Terms", history: "History", rights: "All rights reserved.", contact: "Contact" },
 };
 
 type Dict = typeof en;
@@ -148,15 +149,15 @@ const zh: Dict = {
   meta: {
     title: "长截图转文字 — 聊天记录、会议纪要、长文章截图一键提取文字 | Long2Text",
     description:
-      "在线把长截图转成可复制的文字：自动切分超长图片、并行识别，再拼回段落、说话人和时间，可导出 Markdown。免费使用，无需注册，图片不保存。",
+      "在线把长截图转成可复制的文字：自动切分超长图片、并行识别，再拼回段落、说话人和时间，可导出 Markdown。免费试用，十几秒出结果，图片不保存。",
     ogTitle: "Long2Text — 长截图转文字",
   },
   nav: { how: "怎么做到的", pricing: "价格", faq: "常见问题", history: "历史记录", signIn: "登录", signOut: "退出" },
   hero: {
-    eyebrow: "免费 · 不用注册 · 图片不保存",
+    eyebrow: "免费试用 · 图片不保存 · 十几秒出结果",
     title1: "长截图转文字",
     title2: "段落和说话人都还在",
-    sub: "聊天记录、会议纪要、长文章都行。自动切成小段识别，再拼回带说话人和时间的完整段落，几秒钟就好。",
+    sub: "聊天记录、会议纪要、长文章都行。自动切成小段识别，再拼回带说话人和时间的完整段落，一般十几秒就好。",
   },
   upload: {
     button: "上传长截图",
@@ -271,7 +272,7 @@ const zh: Dict = {
       ["收费吗？", `${FREE_CHARS} 字以内的图片完全免费。更长的图片免费看前 ${PREVIEW_PERCENT}%，付 $0.99 解锁这一张的全文。`],
     ],
   },
-  footer: { privacy: "隐私政策", terms: "服务条款", history: "历史记录", rights: "保留所有权利。" },
+  footer: { privacy: "隐私政策", terms: "服务条款", history: "历史记录", rights: "保留所有权利。", contact: "联系我们" },
 };
 
 export const dicts: Record<Locale, Dict> = { en, zh };

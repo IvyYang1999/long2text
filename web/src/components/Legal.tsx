@@ -1,10 +1,9 @@
 import Link from "next/link";
-import type { Dict } from "@/lib/i18n";
+import { CONTACT_EMAIL, type Dict } from "@/lib/i18n";
 import SiteHeader from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/Landing";
 
-/** Set NEXT_PUBLIC_CONTACT_EMAIL in Vercel to show a contact line on the legal pages. */
-const CONTACT = process.env.NEXT_PUBLIC_CONTACT_EMAIL || "";
+const CONTACT = CONTACT_EMAIL;
 const UPDATED = "2026-09-11";
 
 type Section = { h: string; p: string[] };
