@@ -8,6 +8,7 @@ import { splitImageInBrowser, cropAndScale } from "@/lib/client-splitter";
 import { findSmallTextRegions, unscaleBlocks, mergeEnhanced, ENHANCE_SCALE } from "@/lib/enhance";
 import { structure, previewOf, type SegmentResult, type Scene, type DetectedScene, type OCRBlock } from "@/lib/structure";
 import MarkdownView from "@/components/MarkdownView";
+import { pickCandidates, runCorrections, markCorrections, type Correction } from "@/lib/ai-correct";
 
 export default function Page() {
   return (
@@ -23,8 +24,17 @@ type Status = "idle" | "splitting" | "processing" | "done" | "error";
 const FREE_CHARS = 500;
 const PREVIEW_RATIO = 0.3;
 
+type AiState = "off" | "running" | "done" | "unavailable";
+
 interface OCRResult {
+  rid: string; // client-side key
   id?: string; // database id (if saved)
+  sceneChoice: Scene; // what the user picked ("general" = auto)
+  corrections: Correction[]; // AI corrections in document order
+  ai: AiState;
+  aiDone: number;
+  aiTotal: number;
+  dirty: boolean; // text changed since last save to DB
   name: string; // file name
   imageWidth: number;
   segments: SegmentResult[]; // kept so the scene can be re-applied without re-OCR
@@ -39,6 +49,26 @@ interface OCRResult {
   isPaid: boolean;
   isDownloaded: boolean;
 }
+
+type Labels = { me: string; other: string };
+
+/** Re-run structuring with the result's scene choice and accepted corrections (no OCR). */
+function rebuild(r: OCRResult, labels: Labels): OCRResult {
+  if (r.segments.length === 0) return r;
+  const map = new Map(r.corrections.filter((c) => c.accepted).map((c) => [c.id, c.corrected] as [string, string]));
+  const s = structure(r.segments, r.imageWidth, r.sceneChoice, labels, map);
+  return {
+    ...r,
+    scene: s.scene,
+    markdown: s.markdown,
+    plain: s.plain,
+    preview: previewOf(s.markdown, PREVIEW_RATIO),
+    total_blocks: s.paragraphs.length,
+    total_chars: s.plain.replace(/\s/g, "").length,
+  };
+}
+
+const AI_PREF_KEY = "l2t-ai-correct";
 
 interface LiveState {
   enhancing: boolean;
@@ -89,9 +119,29 @@ function Home() {
   // Pick UI language from the browser on first load
   useEffect(() => {
     // Browser language is only known on the client; one-time sync after hydration.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (typeof navigator !== "undefined" && !/^zh/i.test(navigator.language)) setLang("en");
   }, []);
+
+  const [aiEnabled, setAiEnabled] = useState(true);
+  const [aiAvailable, setAiAvailable] = useState(false);
+  useEffect(() => {
+    fetch("/api/correct")
+      .then((r) => r.json())
+      .then((d) => setAiAvailable(!!d.enabled))
+      .catch(() => setAiAvailable(false));
+  }, []);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(AI_PREF_KEY) === "0") setAiEnabled(false);
+    } catch {}
+  }, []);
+  const toggleAi = () => {
+    const v = !aiEnabled;
+    setAiEnabled(v);
+    try {
+      localStorage.setItem(AI_PREF_KEY, v ? "1" : "0");
+    } catch {}
+  };
 
   const t = T[lang];
   const result = results[activeIndex] || null;
@@ -121,6 +171,13 @@ function Home() {
         if (dbResult) {
           const markdown: string = dbResult.fullText || dbResult.preview || "";
           const restored: OCRResult = {
+            rid: dbResult.id,
+            sceneChoice: "general",
+            corrections: [],
+            ai: "off",
+            aiDone: 0,
+            aiTotal: 0,
+            dirty: false,
             id: dbResult.id,
             name: "",
             imageWidth: 0,
@@ -160,6 +217,54 @@ function Home() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [results]);
+
+  /** Functional update that also keeps resultsRef in sync for async callers. */
+  const mutate = useCallback((rid: string, fn: (r: OCRResult) => OCRResult) => {
+    setResults((prev) => {
+      const next = prev.map((x) => (x.rid === rid ? fn(x) : x));
+      resultsRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const patchDb = useCallback(async (rid: string) => {
+    await new Promise((r) => setTimeout(r, 30)); // let the pending state update land in resultsRef
+    const r = resultsRef.current.find((x) => x.rid === rid);
+    if (!r?.id || !r.dirty) return;
+    try {
+      const res = await fetch("/api/ocr-results", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: r.id, fullText: r.markdown, preview: r.preview, totalChars: r.total_chars }),
+      });
+      if (res.ok) mutate(rid, (x) => ({ ...x, dirty: false }));
+    } catch {
+      console.error("Failed to update OCR result");
+    }
+  }, [mutate]);
+
+  /** Background AI proofreading of low-confidence lines for one result. */
+  const startAi = useCallback(
+    async (r: OCRResult, lines: Parameters<typeof pickCandidates>[0], labels: Labels) => {
+      const candidates = pickCandidates(lines);
+      if (candidates.length === 0) {
+        mutate(r.rid, (x) => ({ ...x, ai: "done", aiDone: 0, aiTotal: 0 }));
+        return;
+      }
+      mutate(r.rid, (x) => ({ ...x, ai: "running", aiDone: 0, aiTotal: candidates.length }));
+      const docText = lines.map((l) => l.text).join("\n");
+      const out = await runCorrections(candidates, docText, (done, total, found) => {
+        mutate(r.rid, (x) => rebuild({ ...x, aiDone: done, aiTotal: total, corrections: found, dirty: found.length > 0 }, labels));
+      });
+      if (out.status === "unavailable") {
+        mutate(r.rid, (x) => rebuild({ ...x, ai: "unavailable", corrections: [] }, labels));
+        return;
+      }
+      mutate(r.rid, (x) => rebuild({ ...x, ai: "done", corrections: out.corrections, dirty: x.dirty || out.corrections.length > 0 }, labels));
+      patchDb(r.rid);
+    },
+    [mutate, patchDb],
+  );
 
   const saveToDb = useCallback(async (r: OCRResult): Promise<string | undefined> => {
     const saveRes = await fetch("/api/ocr-results", {
@@ -270,6 +375,13 @@ function Home() {
         // 4. Final structure
         const final = structure(done, width, scene, labels);
         const newResult: OCRResult = {
+          rid: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          sceneChoice: scene,
+          corrections: [],
+          ai: aiEnabled && aiAvailable ? "running" : "off",
+          aiDone: 0,
+          aiTotal: 0,
+          dirty: false,
           name: file.name,
           imageWidth: width,
           segments: done,
@@ -294,36 +406,44 @@ function Home() {
         }
 
         const next = [...resultsRef.current, newResult];
+        resultsRef.current = next;
         setResults(next);
         setActiveIndex(next.length - 1);
         setStatus("done");
+        if (aiEnabled && aiAvailable) startAi(newResult, final.lines, labels);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unknown error");
         setStatus("error");
       }
     },
-    [busy, lang, scene, session, t.me, t.other, saveToDb],
+    [busy, lang, scene, session, t.me, t.other, saveToDb, aiEnabled, aiAvailable, startAi],
   );
 
   // Re-apply a scene to the active result (no OCR needed — blocks are kept)
-  const applyScene = (s: Scene) => {
-    setScene(s);
+  const applyScene = (sc: Scene) => {
+    setScene(sc);
     if (!result || result.segments.length === 0) return;
-    const r = structure(result.segments, result.imageWidth, s, { me: t.me, other: t.other });
-    setResults((prev) =>
-      prev.map((x, i) =>
-        i === activeIndex
-          ? {
-              ...x,
-              scene: r.scene,
-              markdown: r.markdown,
-              plain: r.plain,
-              preview: previewOf(r.markdown, PREVIEW_RATIO),
-              total_blocks: r.paragraphs.length,
-            }
-          : x,
+    mutate(result.rid, (x) => rebuild({ ...x, sceneChoice: sc, dirty: x.dirty || !!x.id }, { me: t.me, other: t.other }));
+    patchDb(result.rid);
+  };
+
+  // Undo / redo AI corrections
+  const setAccepted = (pick: (c: Correction, i: number) => boolean | undefined) => {
+    if (!result) return;
+    mutate(result.rid, (x) =>
+      rebuild(
+        {
+          ...x,
+          dirty: true,
+          corrections: x.corrections.map((c, i) => {
+            const v = pick(c, i);
+            return v === undefined ? c : { ...c, accepted: v };
+          }),
+        },
+        { me: t.me, other: t.other },
       ),
     );
+    patchDb(result.rid);
   };
 
   const handleDrop = useCallback(
@@ -350,6 +470,8 @@ function Home() {
   );
 
   const visibleMarkdown = result ? (result.isPaid ? result.markdown : result.preview) : "";
+  const displayMarkdown = result ? markCorrections(visibleMarkdown, result.corrections) : "";
+  const acceptedCount = result ? result.corrections.filter((c) => c.accepted).length : 0;
 
   const copyToClipboard = async () => {
     if (!result) return;
@@ -381,7 +503,9 @@ function Home() {
       let resultId = result.id;
       if (!resultId) {
         resultId = await saveToDb(result);
-        setResults((prev) => prev.map((r, i) => (i === activeIndex ? { ...r, id: resultId } : r)));
+        mutate(result.rid, (r) => ({ ...r, id: resultId, dirty: false }));
+      } else if (result.dirty) {
+        await patchDb(result.rid);
       }
       const res = await fetch("/api/checkout", {
         method: "POST",
@@ -481,6 +605,22 @@ function Home() {
               {t.scenes[s]}
             </button>
           ))}
+          {aiAvailable && <span className="mx-1 h-5 w-px bg-slate-200" aria-hidden />}
+          {aiAvailable && <button
+            onClick={toggleAi}
+            aria-pressed={aiEnabled}
+            title={
+              lang === "ch"
+                ? "识别置信度低的行会连同上下文发给 AI 模型校对错别字；改动会高亮，点击可撤销"
+                : "Low-confidence lines are sent with their context to an AI model to fix OCR typos; changes are highlighted and can be undone"
+            }
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-all ${
+              aiEnabled ? "bg-amber-100 text-amber-800 ring-1 ring-amber-300" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+            }`}
+          >
+            {aiEnabled ? "✓ " : ""}
+            {lang === "ch" ? "AI 校对" : "AI proofread"}
+          </button>}
         </section>
 
         {/* Upload zone */}
@@ -616,6 +756,27 @@ function Home() {
                 <span>
                   {result.segments_processed} {lang === "ch" ? "段" : "segments"}
                 </span>
+                {result.ai === "running" && (
+                  <span className="inline-flex items-center gap-1.5 text-amber-700">
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-amber-400" />
+                    {lang === "ch" ? `AI 校对中 ${result.aiDone}/${result.aiTotal}` : `AI proofreading ${result.aiDone}/${result.aiTotal}`}
+                    {result.corrections.length > 0 && (lang === "ch" ? `，已改 ${result.corrections.length} 处` : `, ${result.corrections.length} fixed`)}
+                  </span>
+                )}
+                {result.ai === "done" && result.aiTotal > 0 && result.corrections.length === 0 && (
+                  <span className="text-slate-400">{lang === "ch" ? "AI 校对：无需修改" : "AI proofread: no changes"}</span>
+                )}
+                {result.ai !== "running" && result.corrections.length > 0 && (
+                  <span className="text-amber-700">
+                    {lang === "ch" ? `AI 修正 ${acceptedCount}/${result.corrections.length} 处` : `AI fixed ${acceptedCount}/${result.corrections.length}`}
+                    <button
+                      onClick={() => setAccepted(() => acceptedCount === 0)}
+                      className="ml-2 rounded px-1.5 py-0.5 text-xs text-amber-800 underline decoration-dotted hover:bg-amber-100"
+                    >
+                      {acceptedCount === 0 ? (lang === "ch" ? "全部恢复" : "Redo all") : lang === "ch" ? "全部撤销" : "Undo all"}
+                    </button>
+                  </span>
+                )}
                 {result.failed_segments.length > 0 && (
                   <span className="text-amber-600">
                     {lang === "ch" ? `第 ${result.failed_segments.join("、")} 段识别失败` : `Segment ${result.failed_segments.join(", ")} failed`}
@@ -634,7 +795,16 @@ function Home() {
 
             {/* Text result */}
             <div className="relative rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-              <MarkdownView markdown={visibleMarkdown} />
+              {result.corrections.length > 0 && (
+                <p className="mb-3 text-xs text-amber-700">
+                  {lang === "ch" ? "黄色高亮是 AI 改过的字，鼠标悬停看原文，点击即可撤销这一处。" : "Yellow highlights were changed by AI. Hover to see the original; click to undo."}
+                </p>
+              )}
+              <MarkdownView
+                markdown={displayMarkdown}
+                onMark={(i) => setAccepted((_, j) => (j === i ? false : undefined))}
+                markTitle={(was) => (lang === "ch" ? `AI 修改。原文：「${was || "（无）"}」，点击撤销` : `Changed by AI. Original: "${was}". Click to undo`)}
+              />
 
               {/* Paywall */}
               {!result.isPaid && result.total_chars > FREE_CHARS && (
@@ -732,7 +902,8 @@ function Home() {
                   ["「排版方式」是做什么的？", "自动模式会根据版面判断是聊天记录、会议记录还是文章。聊天记录会标出说话人和时间；文章会识别标题并合并段落。识别完成后可以随时切换，不需要重新上传。"],
                   ["为什么长图要等这么久？", "识别引擎限制每秒 1 段。识别到的内容会实时显示，不用等全部完成。"],
                   ["支持哪些语言？", "中文、英文以及中英混排效果最好，其他语言有基本支持。"],
-                  ["我的图片安全吗？", "图片只在识别过程中经过服务器，不会被保存。登录后识别出的文字会保存在你的历史记录里，只有你能看到。"],
+                  ["「AI 校对」会做什么？", "识别置信度低的行（通常是小字、模糊处）会连同附近几行和全文里相关的句子，一起发给 AI 模型，只修正有上下文依据的错别字，不润色、不改写、不改数字。改过的字会黄色高亮，点击就能撤销。不想用可以在上方关掉。"],
+                  ["我的图片安全吗？", "图片只在识别过程中经过服务器，不会被保存。开启 AI 校对时，少量低置信度的文字行会发给模型服务商（硅基流动）处理，不含图片。登录后识别出的文字会保存在你的历史记录里，只有你能看到。"],
                   ["免费和付费的区别？", `${FREE_CHARS} 字以内的图片完全免费。更长的图片免费看前 ${Math.round(PREVIEW_RATIO * 100)}%，付 $0.99 解锁这一张的全文。`],
                 ]
               : [
@@ -740,7 +911,8 @@ function Home() {
                   ["What does “Layout” do?", "Auto detects whether the image is a chat, a meeting transcript, or an article. Chats get speaker and timestamp labels; articles get headings and merged paragraphs. You can switch after recognition without re-uploading."],
                   ["Why does a long image take a while?", "The OCR engine allows one segment per second. Recognized text is shown as it arrives, so you don't have to wait for the end."],
                   ["Which languages are supported?", "Chinese, English and mixed text work best; other languages have basic support."],
-                  ["Is my image safe?", "Images pass through the server only during recognition and are never stored. If you sign in, the recognized text is kept in your private history."],
+                  ["What does “AI proofread” do?", "Low-confidence lines (usually small or blurry text) are sent, with nearby lines and related sentences from the same image, to an AI model that fixes OCR typos only when the context supports it. No rewriting, no changes to numbers. Every change is highlighted and can be undone with a click. You can switch it off above."],
+                  ["Is my image safe?", "Images pass through the server only during recognition and are never stored. With AI proofread on, a few low-confidence text lines (never the image) are sent to our model provider (SiliconFlow). If you sign in, the recognized text is kept in your private history."],
                   ["Free vs paid?", `Images under ${FREE_CHARS} characters are free. Longer images show the first ${Math.round(PREVIEW_RATIO * 100)}% for free; $0.99 unlocks the full result for that image.`],
                 ]
             ).map(([q, a]) => (
