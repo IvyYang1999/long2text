@@ -7,11 +7,14 @@ import { isTimestamp, type Line } from "./structure";
 import { LIMITS } from "./correct-contract";
 
 export const LOW_CONFIDENCE = 95;
-export const MAX_CANDIDATES = 60;
-export const CONCURRENCY = 4;
+export const MAX_CANDIDATES = 24;
+export const CONCURRENCY = 12;
+export const REQUEST_TIMEOUT_MS = 10_000; // a slow answer is dropped, the OCR text stays
+const JUNK_CONFIDENCE = 50; // below this the line is usually icon/emoji noise the model cannot fix
 export const MAX_CONFLICTS = 15; // high-confidence lines pulled in by document-wide conflicts
 
 export interface Candidate {
+  y: number; // global top of the line (for scrolling the image to it)
   id: string;
   text: string;
   confidence: number;
@@ -20,6 +23,7 @@ export interface Candidate {
 
 export interface Correction {
   order: number; // candidate index = document order
+  y: number;
   id: string;
   original: string;
   corrected: string;
@@ -32,10 +36,13 @@ function clip(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max);
 }
 
+function cjkCount(t: string): number {
+  return (t.match(/[\u4e00-\u9fff]/g) || []).length;
+}
+
 function isWorthChecking(t: string): boolean {
-  const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length;
   const words = (t.match(/[A-Za-z]{2,}/g) || []).length;
-  return t.length >= 3 && (cjk >= 2 || words >= 2);
+  return t.length >= 4 && (cjkCount(t) >= 3 || words >= 2);
 }
 
 /**
@@ -101,10 +108,18 @@ export function pickCandidates(lines: Line[]): Candidate[] {
       if (t.length > LIMITS.text || !isWorthChecking(t) || isTimestamp(t)) return null;
       const near = new Set([i - 2, i - 1, i + 1, i + 2]);
       const conflict = conflictLines(l.text, lines, i, near, true).length > 0;
+      if (!conflict && l.conf < JUNK_CONFIDENCE) return null;
       return conflict || l.conf < LOW_CONFIDENCE ? { l, i, conflict } : null;
     })
     .filter((x): x is { l: Line; i: number; conflict: boolean } => x !== null)
-    .sort((a, b) => (a.conflict === b.conflict ? a.l.conf - b.l.conf : a.conflict ? -1 : 1))
+    // conflicts first; then lines with more real text and lower confidence
+    .sort((a, b) =>
+      a.conflict === b.conflict
+        ? (cjkCount(b.l.text) + 1) * (100 - b.l.conf) - (cjkCount(a.l.text) + 1) * (100 - a.l.conf)
+        : a.conflict
+          ? -1
+          : 1,
+    )
     .filter((x, k, arr) => !x.conflict || x.l.conf < LOW_CONFIDENCE || arr.slice(0, k).filter((y) => y.conflict).length < MAX_CONFLICTS)
     .slice(0, MAX_CANDIDATES)
     .sort((a, b) => a.i - b.i);
@@ -116,7 +131,7 @@ export function pickCandidates(lines: Line[]): Candidate[] {
     const evidence = conflictLines(l.text, lines, i, near).sort((a, b) => a - b).map((k) => lines[k].text.trim());
     let context = [...before, ...after].join("\n");
     if (evidence.length) context = evidence.join("\n") + "\n……\n" + context;
-    return { id: l.id, text: l.text, confidence: l.conf, context: clip(context, LIMITS.context) };
+    return { y: l.y, id: l.id, text: l.text, confidence: l.conf, context: clip(context, LIMITS.context) };
   });
 }
 
@@ -153,11 +168,12 @@ type Outcome = { status: "ok"; text: string; changed: boolean } | { status: "una
 async function correctOne(c: Candidate, signal?: AbortSignal): Promise<Outcome> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
       const res = await fetch("/api/correct", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ context: c.context, text: c.text, confidence: c.confidence }),
-        signal,
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       });
       if (res.status === 503) return { status: "unavailable" };
       if (res.status === 429 || res.status >= 500) {
@@ -169,7 +185,7 @@ async function correctOne(c: Candidate, signal?: AbortSignal): Promise<Outcome> 
       if (typeof data.text !== "string") return { status: "failed" };
       return { status: "ok", text: data.text, changed: !!data.changed && data.text !== c.text };
     } catch {
-      if (signal?.aborted) return { status: "failed" };
+      return { status: "failed" }; // timeout or network: keep the OCR text, don't retry
     }
   }
   return { status: "failed" };
@@ -201,7 +217,7 @@ export async function runCorrections(
         return;
       }
       if (r.status === "ok" && r.changed && supportedByDocument(c.text, r.text, docChars)) {
-        found.push({ order, id: c.id, original: c.text, corrected: r.text, accepted: true });
+        found.push({ order, y: c.y, id: c.id, original: c.text, corrected: r.text, accepted: true });
         found.sort((a, b) => a.order - b.order);
       }
       done++;
@@ -217,7 +233,7 @@ export async function runCorrections(
 //   U+E000 <index> U+E003 <new span> U+E001 <old span> U+E002
 export const MARK_RE = /\uE000(\d+)\uE003([^\uE001]*)\uE001([^\uE002]*)\uE002/g;
 
-function changedSpan(original: string, corrected: string) {
+export function changedSpan(original: string, corrected: string) {
   const a = [...original];
   const b = [...corrected];
   let p = 0;

@@ -10,6 +10,7 @@ import { similarity, type OCRBlock } from "./structure";
 
 export const SMALL_TEXT_PX = 24;
 export const ENHANCE_SCALE = 2;
+const UNCERTAIN = 95; // confidence below which a small-text line triggers the 2× pass
 const MAX_REGION_HEIGHT = 1200; // source px per upscaled request
 const REGION_GAP = 200;
 const PAD = 12;
@@ -25,6 +26,9 @@ export function findSmallTextRegions(blocks: OCRBlock[], segmentHeight: number):
     .filter((b) => b.height && b.height > 0 && b.height < SMALL_TEXT_PX && b.text.trim().length >= 2)
     .sort((a, b) => a.y - b.y);
   if (small.length < 2) return [];
+  // Only worth a second request when the engine was unsure about some of that small text
+  const uncertain = small.filter((b) => (b.confidence ?? 100) < UNCERTAIN);
+  if (uncertain.length === 0) return [];
   const regions: Region[] = [];
   let y0 = small[0].y;
   let y1 = small[0].y + (small[0].height || 0);
@@ -48,7 +52,7 @@ export function findSmallTextRegions(blocks: OCRBlock[], segmentHeight: number):
     }
     if (b - a > 20) out.push({ y0: a, y1: b });
   }
-  return out;
+  return out.filter((r) => uncertain.some((u) => u.y >= r.y0 && u.y <= r.y1));
 }
 
 /** Map blocks from an upscaled crop back into segment-local coordinates. */

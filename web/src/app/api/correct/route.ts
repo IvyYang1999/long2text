@@ -9,7 +9,7 @@ import {
   modelParams,
 } from "@/lib/correct-contract";
 
-export const maxDuration = 60;
+export const maxDuration = 20;
 
 const ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions";
 
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
 
   const keep = (reason: string) => NextResponse.json({ text, changed: false, reason });
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 50_000);
+  const timer = setTimeout(() => controller.abort(), 12_000);
   const started = Date.now();
   const model = process.env.SILICONFLOW_MODEL?.trim() || CORRECT_MODEL_DEFAULT;
   try {
