@@ -9,6 +9,56 @@ import type { ClientSegment } from "./client-splitter";
 import { cropAndScale } from "./client-splitter";
 import { findSmallTextRegions, unscaleBlocks, mergeEnhanced, ENHANCE_SCALE, type Region } from "./enhance";
 import type { OCRBlock, SegmentResult } from "./structure";
+import { detectFigures, dedupeFigures, type FigureBox } from "./figures";
+
+const ANALYSIS_W = 360; // px width used to look for pictures
+
+/** Pictures (stickers, photos…) in one slice, in slice px. Browser only. */
+async function findFigures(blob: Blob, blocks: OCRBlock[]): Promise<FigureBox[]> {
+  const bmp = await createImageBitmap(blob);
+  const scale = Math.min(1, ANALYSIS_W / bmp.width);
+  const w = Math.max(1, Math.round(bmp.width * scale));
+  const h = Math.max(1, Math.round(bmp.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high"; // area-averaged like the node tests; "low" aliases into fake texture
+  ctx.drawImage(bmp, 0, 0, w, h);
+  bmp.close();
+  const px = ctx.getImageData(0, 0, w, h);
+  return detectFigures({ width: w, height: h, data: px.data }, scale, blocks);
+}
+
+export interface Figure extends FigureBox {
+  id: string;
+  blob: Blob;
+  url: string;
+}
+
+/** Crop the found boxes out of the original file (full resolution). */
+export async function cropFigures(file: Blob, boxes: FigureBox[]): Promise<Figure[]> {
+  const out: Figure[] = [];
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i];
+    try {
+      const x = Math.max(0, Math.round(b.x));
+      const y = Math.max(0, Math.round(b.y));
+      const bmp = await createImageBitmap(file, x, y, Math.max(1, Math.round(b.w)), Math.max(1, Math.round(b.h)));
+      const canvas = document.createElement("canvas");
+      canvas.width = bmp.width;
+      canvas.height = bmp.height;
+      canvas.getContext("2d")!.drawImage(bmp, 0, 0);
+      bmp.close();
+      const blob = await new Promise<Blob>((res, rej) => canvas.toBlob((bl) => (bl ? res(bl) : rej(new Error("crop failed"))), "image/jpeg", 0.9));
+      out.push({ ...b, id: `img${i + 1}`, blob, url: URL.createObjectURL(blob) });
+    } catch (e) {
+      console.error("[figures] crop failed", e);
+    }
+  }
+  return out;
+}
 
 export const OCR_CONCURRENCY = 12;
 
@@ -46,7 +96,8 @@ export interface Progress {
 export async function recognize(
   segments: ClientSegment[],
   onProgress: (p: Progress) => void,
-): Promise<{ results: SegmentResult[]; failed: number[] }> {
+): Promise<{ results: SegmentResult[]; failed: number[]; figures: FigureBox[] }> {
+  const found: FigureBox[] = [];
   const results: (SegmentResult | null)[] = segments.map(() => null);
   const blocksOf: OCRBlock[][] = segments.map(() => []);
   const pendingZoom = segments.map(() => 0);
@@ -113,6 +164,13 @@ export async function recognize(
       const blocks = await ocrOnce(s.blob, `segment-${s.index}.jpg`);
       if (!blocks) failed.push(i + 1);
       blocksOf[i] = blocks || [];
+      if (blocks) {
+        try {
+          for (const f of await findFigures(s.blob, blocks)) found.push({ ...f, y: f.y + s.yStart });
+        } catch (e) {
+          console.error("[figures] detection failed", e);
+        }
+      }
       const regions = blocks ? findSmallTextRegions(blocks, s.yEnd - s.yStart) : [];
       pendingZoom[i] = regions.length;
       enhancing += regions.length;
@@ -123,10 +181,10 @@ export async function recognize(
     });
   });
 
-  if (segments.length === 0) return { results: [], failed };
+  if (segments.length === 0) return { results: [], failed, figures: [] };
   report();
   pump();
   await allDone;
   failed.sort((a, b) => a - b);
-  return { results: results.filter((r): r is SegmentResult => !!r), failed };
+  return { results: results.filter((r): r is SegmentResult => !!r), failed, figures: dedupeFigures(found) };
 }

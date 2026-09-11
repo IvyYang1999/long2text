@@ -42,7 +42,18 @@ export interface Row {
   cells: Line[]; // left-to-right
 }
 
+/** A picture found in the screenshot (stickers, photos…), in global px. */
+export interface FigureRef {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  alt: string;
+}
+
 export interface Paragraph {
+  figure?: FigureRef;
   lines: Row[];
   x: number; // left edge of first row
   y: number;
@@ -349,7 +360,8 @@ function looksLikeName(p: Paragraph): boolean {
   return true;
 }
 
-export function detectScene(paragraphs: Paragraph[]): DetectedScene {
+export function detectScene(all: Paragraph[]): DetectedScene {
+  const paragraphs = all.filter((p) => !p.figure);
   if (paragraphs.length === 0) return "article";
   let times = 0;
   let left = 0;
@@ -383,11 +395,16 @@ export function detectScene(paragraphs: Paragraph[]): DetectedScene {
 
 // ───────────────────────── formatting ─────────────────────────
 
+const cleanAlt = (s: string) => s.replace(/[\[\]()\n]/g, " ").replace(/\s+/g, " ").trim();
+export const figMd = (f: FigureRef) => `![${cleanAlt(f.alt)}](fig:${f.id})`;
+
 function fmtTime(t: string): string {
   return `*${t.trim()}*`;
 }
 
-function formatChat(paragraphs: Paragraph[], lh: number, labels: { me: string; other: string }): string {
+const VOICE = /^[^\p{L}\p{N}]{0,3}(\d{1,3})\s*["”″'’]{1,2}\s*$/u;
+
+function formatChat(paragraphs: Paragraph[], lh: number, labels: { me: string; other: string; voice?: string }): string {
   const out: string[] = [];
   let speaker: string | null = null;
   let pendingName: string | null = null;
@@ -400,6 +417,14 @@ function formatChat(paragraphs: Paragraph[], lh: number, labels: { me: string; o
   const leftColumn = modeOf(nonTime.filter((p) => p.side !== "right").map((p) => p.x), lh * 0.4);
   for (let i = 0; i < paragraphs.length; i++) {
     const p = paragraphs[i];
+    if (p.figure) {
+      if (hasBubbles) {
+        const who = p.side === "right" ? labels.me : pendingName || labels.other;
+        pendingName = null;
+        out.push(`**${who}**：${figMd(p.figure)}`);
+      } else out.push(figMd(p.figure));
+      continue;
+    }
     const cells = p.lines[0].cells;
     const text = p.text.trim();
     // pure timestamp / date row
@@ -421,17 +446,20 @@ function formatChat(paragraphs: Paragraph[], lh: number, labels: { me: string; o
     const nameLike =
       !!next &&
       next.y - p.yEnd < lh * 1.8 &&
-      (knownNames.has(text) || (looksLikeName(p) && (!looksLikeName(next) || next.x - p.x > lh * 0.3)));
+      (knownNames.has(text) || (looksLikeName(p) && (!!next.figure || !looksLikeName(next) || next.x - p.x > lh * 0.3)));
     if (nameLike) knownNames.add(text);
     if (nameLike && !hasBubbles) {
       speaker = text;
       out.push(`**${speaker}**`);
       continue;
     }
-    if (nameLike && hasBubbles && next.side !== "right" && p.side !== "right" && p.x <= leftColumn + lh * 0.5 && next.x - p.x > lh * 0.3) {
+    // a name row sits at the left column, and the bubble under it is indented — except a picture message, which aligns with the name
+    if (nameLike && hasBubbles && next.side !== "right" && p.side !== "right" && p.x <= leftColumn + lh * 0.5 && (next.figure || next.x - p.x > lh * 0.3)) {
       pendingName = text;
       continue;
     }
+    const voice = text.match(VOICE);
+    const shown = voice ? `[${labels.voice || "语音"} ${voice[1]}″]` : text;
     if (hasBubbles) {
       if (p.side === "full" && !pendingName) {
         out.push(text); // system / centered message
@@ -439,9 +467,9 @@ function formatChat(paragraphs: Paragraph[], lh: number, labels: { me: string; o
       }
       const who = p.side === "right" ? labels.me : pendingName || labels.other;
       pendingName = null;
-      out.push(`**${who}**：${text}`);
+      out.push(`**${who}**：${shown}`);
     } else {
-      out.push(text);
+      out.push(shown);
     }
   }
   return out.join("\n\n");
@@ -451,6 +479,10 @@ function formatMeeting(paragraphs: Paragraph[], lh: number): string {
   const out: string[] = [];
   for (let i = 0; i < paragraphs.length; i++) {
     const p = paragraphs[i];
+    if (p.figure) {
+      out.push(figMd(p.figure));
+      continue;
+    }
     const t = p.text.trim();
     if (isTimestamp(t)) {
       out.push(fmtTime(t));
@@ -472,10 +504,15 @@ function formatMeeting(paragraphs: Paragraph[], lh: number): string {
 }
 
 function formatArticle(paragraphs: Paragraph[]): string {
-  const bodyH = median(paragraphs.filter((p) => p.lines.length >= 2).map((p) => p.h)) || median(paragraphs.map((p) => p.h));
+  const text = paragraphs.filter((p) => !p.figure);
+  const bodyH = median(text.filter((p) => p.lines.length >= 2).map((p) => p.h)) || median(text.map((p) => p.h));
   const out: string[] = [];
   for (let i = 0; i < paragraphs.length; i++) {
     const p = paragraphs[i];
+    if (p.figure) {
+      out.push(figMd(p.figure));
+      continue;
+    }
     const t = p.text.trim();
     if (!t) continue;
     const big = bodyH > 0 && p.h >= bodyH * 1.22;
@@ -486,7 +523,7 @@ function formatArticle(paragraphs: Paragraph[]): string {
       out.push(`${p.h >= bodyH * 1.5 ? "#" : "##"} ${t}`);
       continue;
     }
-    if (short && followedByBody) {
+    if (short && followedByBody && p.h >= bodyH * 0.95) {
       out.push(`${i === 0 ? "#" : "##"} ${t}`);
       continue;
     }
@@ -505,6 +542,7 @@ function formatArticle(paragraphs: Paragraph[]): string {
 
 function plainFromMarkdown(md: string): string {
   return md
+    .replace(/!\[([^\]]*)\]\(fig:[^)]+\)/g, "[$1]")
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$)/g, "$1$2");
@@ -514,11 +552,21 @@ export function structure(
   segments: SegmentResult[],
   imageWidth: number,
   scene: Scene = "general",
-  labels: { me: string; other: string } = { me: "我", other: "对方" },
+  labels: { me: string; other: string; voice?: string } = { me: "我", other: "对方" },
   corrections?: Map<string, string>,
+  figures: FigureRef[] = [],
 ): StructuredResult {
-  const lines = mergeSegments(segments, corrections);
-  const { paragraphs, lh } = buildParagraphs(lines, imageWidth);
+  const all = mergeSegments(segments, corrections);
+  // text inside a picture (a sticker's caption) belongs to the picture, not the prose
+  const inside = (l: Line) => figures.some((f) => {
+    const cx = l.x + l.w / 2;
+    const cy = l.y + l.h / 2;
+    return cx >= f.x && cx <= f.x + f.w && cy >= f.y && cy <= f.y + f.h;
+  });
+  const lines = figures.length ? all.filter((l) => !inside(l)) : all;
+  const built = buildParagraphs(lines, imageWidth);
+  const lh = built.lh;
+  const paragraphs = figures.length ? insertFigures(built.paragraphs, figures, imageWidth, lh) : built.paragraphs;
   const detected: DetectedScene = scene === "general" ? detectScene(paragraphs) : scene;
   let markdown: string;
   if (detected === "chat") markdown = formatChat(paragraphs, lh, labels);
@@ -526,6 +574,32 @@ export function structure(
   else markdown = formatArticle(paragraphs);
   markdown = markdown.replace(/\n{3,}/g, "\n\n").trim();
   return { scene: detected, lines, paragraphs, markdown, plain: plainFromMarkdown(markdown) };
+}
+
+function insertFigures(paragraphs: Paragraph[], figures: FigureRef[], imageWidth: number, lh: number): Paragraph[] {
+  const out = [...paragraphs];
+  for (const f of [...figures].sort((a, b) => a.y - b.y)) {
+    const center = f.x + f.w / 2;
+    const side: Side = center > imageWidth * 0.55 ? "right" : f.x < imageWidth * 0.3 ? "left" : "full";
+    const para: Paragraph = { figure: f, lines: [], x: f.x, y: f.y, yEnd: f.y + f.h, h: lh, side, text: "" };
+    const at = out.findIndex((p) => p.y > f.y);
+    if (at < 0) out.push(para);
+    else out.splice(at, 0, para);
+  }
+  return out;
+}
+
+/** Text lines (with their ids) inside a figure — used as its fallback caption. */
+export function textInside(segments: SegmentResult[], f: { x: number; y: number; w: number; h: number }): string {
+  return mergeSegments(segments)
+    .filter((l) => {
+      const cx = l.x + l.w / 2;
+      const cy = l.y + l.h / 2;
+      return cx >= f.x && cx <= f.x + f.w && cy >= f.y && cy <= f.y + f.h;
+    })
+    .map((l) => l.text.trim())
+    .join(" ")
+    .slice(0, 40);
 }
 
 /** First `ratio` of the markdown by paragraph count (at least `min` paragraphs). */

@@ -8,7 +8,25 @@ import { Fragment } from "react";
  *   "- " bullets, "1. " numbered items, paragraphs separated by blank lines.
  * No external dependency, no raw HTML.
  */
-type MarkHandler = { onMark?: (index: number) => void; markTitle?: (original: string) => string };
+type MarkHandler = { onMark?: (index: number) => void; markTitle?: (original: string) => string; figures?: Record<string, string>; captions?: boolean };
+
+const FIG_SPLIT = /(!\[[^\]]*\]\(fig:[^)]+\))/g;
+const FIG_PARSE = /^!\[([^\]]*)\]\(fig:([^)]+)\)$/;
+
+function renderFigure(part: string, key: string, h: MarkHandler) {
+  const m = part.match(FIG_PARSE);
+  if (!m) return null;
+  const [, alt, id] = m;
+  const url = h.figures?.[id];
+  if (!url) return <span key={key} className="text-faint">[{alt}]</span>;
+  return (
+    <span key={key} className="my-1 inline-flex max-w-full flex-col align-top">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={url} alt={alt} className="max-h-44 max-w-[220px] rounded-xl border border-line bg-wash object-contain" />
+      {h.captions && alt && <span className="mt-1 max-w-[220px] text-xs leading-snug text-muted">{alt}</span>}
+    </span>
+  );
+}
 
 // Display-only AI-correction markers inserted by lib/ai-correct.ts markCorrections():
 //   U+E000 <index> U+E003 <new span> U+E001 <old span> U+E002
@@ -39,8 +57,15 @@ function renderMarks(text: string, key: string, h: MarkHandler) {
   });
 }
 
-/** Minimal inline renderer: **bold** (speaker names), *italic* (timestamps), AI-correction marks. */
+/** Minimal inline renderer: pictures, **bold** (speaker names), *italic* (timestamps), AI-correction marks. */
 function renderInline(text: string, key: string, h: MarkHandler) {
+  if (text.includes("](fig:")) {
+    return text.split(FIG_SPLIT).filter(Boolean).map((part, i) => renderFigure(part, `${key}-f${i}`, h) ?? <Fragment key={`${key}-f${i}`}>{renderText(part, `${key}-f${i}`, h)}</Fragment>);
+  }
+  return renderText(text, key, h);
+}
+
+function renderText(text: string, key: string, h: MarkHandler) {
   const parts = text.split(/(\*\*[^*]+\*\*|\*[^*\n]+\*)/g).filter(Boolean);
   return parts.map((p, i) => {
     if (p.startsWith("**") && p.endsWith("**") && p.length > 4) {
@@ -66,13 +91,17 @@ export default function MarkdownView({
   className = "",
   onMark,
   markTitle,
+  figures,
+  captions = true,
 }: {
   markdown: string;
   className?: string;
   onMark?: (index: number) => void;
   markTitle?: (original: string) => string;
+  figures?: Record<string, string>;
+  captions?: boolean;
 }) {
-  const h: MarkHandler = { onMark, markTitle };
+  const h: MarkHandler = { onMark, markTitle, figures, captions };
   const blocks = markdown.split(/\n{2,}/);
   return (
     <div className={`space-y-3 text-sm leading-relaxed text-slate-800 ${className}`}>

@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession, signIn } from "next-auth/react";
 import { splitImageInBrowser } from "@/lib/client-splitter";
-import { recognize } from "@/lib/pipeline";
-import { structure, previewOf, type SegmentResult, type Scene, type DetectedScene, type Line } from "@/lib/structure";
+import { recognize, cropFigures, type Figure } from "@/lib/pipeline";
+import { structure, previewOf, textInside, type SegmentResult, type Scene, type DetectedScene, type Line, type FigureRef } from "@/lib/structure";
+import { withImageFiles, figureIds, toHtml, toStyledHtml, makeZip, applyMode, type OutputMode } from "@/lib/export";
 import { pickCandidates, runCorrections, markCorrections, changedSpan, type Correction } from "@/lib/ai-correct";
 import { FREE_CHARS, PREVIEW_PERCENT, dicts, type Locale } from "@/lib/i18n";
 import MarkdownView from "@/components/MarkdownView";
-import HeroDemo from "@/components/HeroDemo";
+import CaseShowcase from "@/components/CaseShowcase";
 import {
   IconUpload,
   IconLock,
@@ -19,14 +20,12 @@ import {
   IconCheck,
   IconImage,
   IconUndo,
-  IconChat,
-  IconMeeting,
-  IconArticle,
 } from "@/components/Icons";
 
 type Phase = "idle" | "splitting" | "processing" | "done" | "error";
 type AiState = "off" | "running" | "done" | "unavailable";
-type Labels = { me: string; other: string };
+type Labels = { me: string; other: string; image: string; voice: string };
+type Pic = Figure & { ocrText: string; desc?: string };
 
 interface Result {
   rid: string;
@@ -49,6 +48,9 @@ interface Result {
   isPaid: boolean;
   isDownloaded: boolean;
   corrections: Correction[];
+  figures: Pic[];
+  describe: "idle" | "running" | "done";
+  descDone: number;
   ai: AiState;
   aiDone: number;
   aiTotal: number;
@@ -64,13 +66,33 @@ interface Live {
 }
 
 const AI_PREF_KEY = "l2t-ai-correct";
+const MODE_KEY = "l2t-output-mode";
 const PREVIEW_RATIO = PREVIEW_PERCENT / 100;
 const countChars = (s: string) => s.replace(/\s/g, "").length;
+
+const figRefs = (figs: Pic[], label: string): FigureRef[] =>
+  figs.map((f) => ({ id: f.id, x: f.x, y: f.y, w: f.w, h: f.h, alt: f.desc || f.ocrText || label }));
+
+async function toDataUrl(blob: Blob, maxW?: number): Promise<string> {
+  if (!maxW) return await new Promise((res) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result));
+    fr.readAsDataURL(blob);
+  });
+  const bmp = await createImageBitmap(blob);
+  const k = Math.min(1, maxW / bmp.width);
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(bmp.width * k));
+  c.height = Math.max(1, Math.round(bmp.height * k));
+  c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close();
+  return c.toDataURL("image/jpeg", 0.82);
+}
 
 function rebuild(r: Result, labels: Labels): Result {
   if (r.segments.length === 0) return r;
   const map = new Map(r.corrections.filter((c) => c.accepted).map((c) => [c.id, c.corrected] as [string, string]));
-  const s = structure(r.segments, r.imageWidth, r.sceneChoice, labels, map);
+  const s = structure(r.segments, r.imageWidth, r.sceneChoice, labels, map, figRefs(r.figures, labels.image));
   return {
     ...r,
     scene: s.scene,
@@ -82,16 +104,13 @@ function rebuild(r: Result, labels: Labels): Result {
   };
 }
 
-const SAMPLES = [
-  { key: "chat", Icon: IconChat },
-  { key: "meeting", Icon: IconMeeting },
-  { key: "article", Icon: IconArticle },
-] as const;
+
 
 export default function Converter({ locale }: { locale: Locale }) {
   const d = dicts[locale];
   const { data: session } = useSession();
-  const labels: Labels = { me: d.work.me, other: d.work.them };
+  const labels: Labels = { me: d.work.me, other: d.work.them, image: d.work.image, voice: d.work.voice };
+  const [mode, setMode] = useState<OutputMode>("rich");
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [scene, setScene] = useState<Scene>("general");
@@ -124,6 +143,8 @@ export default function Converter({ locale }: { locale: Locale }) {
     if (/Mac|iPhone|iPad/.test(navigator.platform)) setPasteKey("⌘ V");
     try {
       if (localStorage.getItem(AI_PREF_KEY) === "0") setAiEnabled(false);
+      const m = localStorage.getItem(MODE_KEY);
+      if (m === "text" || m === "rich" || m === "both") setMode(m);
     } catch {}
     fetch("/api/correct")
       .then((r) => r.json())
@@ -143,11 +164,11 @@ export default function Converter({ locale }: { locale: Locale }) {
     const res = await fetch("/api/ocr-results", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fullText: r.markdown, preview: r.preview, totalChars: r.totalChars, segmentsProcessed: r.slices }),
+      body: JSON.stringify({ fullText: applyMode(r.markdown, r.figures, "text", d.work.image), preview: applyMode(r.preview, r.figures, "text", d.work.image), totalChars: r.totalChars, segmentsProcessed: r.slices }),
     });
     if (!res.ok) throw new Error(`Save failed: ${res.status}`);
     return (await res.json()).id as string | undefined;
-  }, []);
+  }, [d.work.image]);
 
   const patchDb = useCallback(
     async (rid: string) => {
@@ -158,14 +179,14 @@ export default function Converter({ locale }: { locale: Locale }) {
         const res = await fetch("/api/ocr-results", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: r.id, fullText: r.markdown, preview: r.preview, totalChars: r.totalChars }),
+          body: JSON.stringify({ id: r.id, fullText: applyMode(r.markdown, r.figures, "text", d.work.image), preview: applyMode(r.preview, r.figures, "text", d.work.image), totalChars: r.totalChars }),
         });
         if (res.ok) mutate(rid, (x) => ({ ...x, dirty: false }));
       } catch {
         console.error("Failed to update OCR result");
       }
     },
-    [mutate],
+    [mutate, d.work.image],
   );
 
   // ── Stripe return: /?paid=<id>&session_id=… ──
@@ -205,6 +226,9 @@ export default function Converter({ locale }: { locale: Locale }) {
             isPaid: paid || row.totalChars <= FREE_CHARS,
             isDownloaded: false,
             corrections: [],
+            figures: [],
+            describe: "idle",
+            descDone: 0,
             ai: "off",
             aiDone: 0,
             aiTotal: 0,
@@ -284,13 +308,14 @@ export default function Converter({ locale }: { locale: Locale }) {
         const split = await splitImageInBrowser(file);
         setLive((l) => ({ ...l, total: split.segments.length }));
         setPhase("processing");
-        const { results: segs, failed } = await recognize(split.segments, (p) => {
+        const { results: segs, failed, figures: boxes } = await recognize(split.segments, (p) => {
           const preview = p.prefix.length ? structure(p.prefix, split.width, scene, labels).markdown : "";
           setLive({ finished: p.finished, total: p.total, enhancing: p.enhancing, etaSec: p.etaSec, markdown: preview });
         });
         if (failed.length === split.segments.length) throw new Error(d.work.recognitionFailed);
 
-        const final = structure(segs, split.width, scene, labels);
+        const pics: Pic[] = (await cropFigures(file, boxes)).map((f) => ({ ...f, ocrText: textInside(segs, f) }));
+        const final = structure(segs, split.width, scene, labels, undefined, figRefs(pics, labels.image));
         const chars = countChars(final.plain);
         const willProofread = aiEnabled && aiAvailable;
         const r: Result = {
@@ -313,6 +338,9 @@ export default function Converter({ locale }: { locale: Locale }) {
           isPaid: chars <= FREE_CHARS,
           isDownloaded: false,
           corrections: [],
+          figures: pics,
+          describe: "idle",
+          descDone: 0,
           ai: willProofread ? "running" : "off",
           aiDone: 0,
           aiTotal: 0,
@@ -456,26 +484,104 @@ export default function Converter({ locale }: { locale: Locale }) {
     pane.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
   };
 
-  const visible = result ? (result.isPaid ? result.markdown : result.preview) : "";
+  const base = result ? (result.isPaid ? result.markdown : result.preview) : "";
+  const visible = result ? applyMode(base, result.figures, mode, d.work.image) : "";
+  const textOnly = result ? applyMode(base, result.figures, "text", d.work.image) : "";
   const display = result && result.ai !== "off" ? markCorrections(visible, result.corrections) : visible;
   const accepted = result ? result.corrections.filter((c) => c.accepted).length : 0;
 
+  const figUrls = result ? Object.fromEntries(result.figures.map((f) => [f.id, f.url])) : {};
+  const visibleFigs = result && mode !== "text" ? figureIds(visible) : [];
+
+  const chooseMode = (m: OutputMode) => {
+    setMode(m);
+    try {
+      localStorage.setItem(MODE_KEY, m);
+    } catch {}
+  };
+
+  // Copy: Markdown text for plain editors, rich HTML (with the pictures) for docs
   const copy = async () => {
     if (!result) return;
-    await navigator.clipboard.writeText(visible);
+    const plain = mode === "text" ? visible : textOnly; // plain editors always get the text-only version
+    try {
+      if (visibleFigs.length && typeof ClipboardItem !== "undefined") {
+        const pics = result.figures.filter((f) => visibleFigs.includes(f.id));
+        const html = Promise.all(pics.map(async (f) => [f.id, await toDataUrl(f.blob)] as const)).then((pairs) => {
+          const urls = Object.fromEntries(pairs);
+          return new Blob([toHtml(visible, (id) => urls[id])], { type: "text/html" });
+        });
+        await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob([plain], { type: "text/plain" }), "text/html": html })]);
+      } else {
+        await navigator.clipboard.writeText(plain);
+      }
+    } catch {
+      await navigator.clipboard.writeText(plain);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const download = () => {
-    if (!result) return;
-    const blob = new Blob([visible], { type: "text/markdown;charset=utf-8" });
+  const save = (blob: Blob, name: string) => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = (result.name || "long2text").replace(/\.[a-z0-9]+$/i, "") + ".md";
+    a.download = name;
     a.click();
-    URL.revokeObjectURL(a.href);
-    mutate(result.rid, (x) => ({ ...x, isDownloaded: true }));
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    if (result) mutate(result.rid, (x) => ({ ...x, isDownloaded: true }));
+  };
+  const baseName = () => (result?.name || "long2text").replace(/\.[a-z0-9]+$/i, "");
+
+  // Download: text → .md; with pictures → a typeset, self-contained HTML page
+  const download = async () => {
+    if (!result) return;
+    if (!visibleFigs.length) return save(new Blob([visible], { type: "text/markdown;charset=utf-8" }), `${baseName()}.md`);
+    const pics = result.figures.filter((f) => visibleFigs.includes(f.id));
+    const urls = Object.fromEntries(await Promise.all(pics.map(async (f) => [f.id, await toDataUrl(f.blob)] as const)));
+    const html = toStyledHtml({ title: baseName(), md: visible, chat: result.scene === "chat", me: d.work.me, src: (id) => urls[id], lang: d.htmlLang });
+    save(new Blob([html], { type: "text/html;charset=utf-8" }), `${baseName()}.html`);
+  };
+
+  // …or Markdown + an images/ folder
+  const downloadZip = async () => {
+    if (!result) return;
+    const pics = result.figures.filter((f) => visibleFigs.includes(f.id));
+    const files = [{ name: `${baseName()}.md`, data: new TextEncoder().encode(withImageFiles(visible)) }];
+    for (const f of pics) files.push({ name: `images/${f.id}.jpg`, data: new Uint8Array(await f.blob.arrayBuffer()) });
+    save(makeZip(files), `${baseName()}.zip`);
+  };
+
+  // One-line AI descriptions for the pictures (only on request: sends the crops)
+  const describe = async () => {
+    const r = result;
+    if (!r || r.figures.length === 0) return;
+    mutate(r.rid, (x) => ({ ...x, describe: "running", descDone: 0 }));
+    const queue = [...r.figures];
+    let done = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(6, queue.length) }, async () => {
+        while (queue.length) {
+          const f = queue.shift()!;
+          try {
+            const image = await toDataUrl(f.blob, 384);
+            const res = await fetch("/api/describe", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ image, lang: d.locale }),
+              signal: AbortSignal.timeout(20_000),
+            });
+            if (res.ok) {
+              const { text } = await res.json();
+              if (text) mutate(r.rid, (x) => rebuild({ ...x, figures: x.figures.map((g) => (g.id === f.id ? { ...g, desc: text } : g)), dirty: x.dirty || !!x.id }, labels));
+            }
+          } catch {}
+          done++;
+          mutate(r.rid, (x) => ({ ...x, descDone: done }));
+        }
+      }),
+    );
+    mutate(r.rid, (x) => ({ ...x, describe: "done" }));
+    patchDb(r.rid);
   };
 
   const unlock = async () => {
@@ -505,6 +611,13 @@ export default function Converter({ locale }: { locale: Locale }) {
       setError(e instanceof Error ? e.message : "Payment failed");
     }
   };
+
+  // Modes that need descriptions ask the vision model once per result
+  useEffect(() => {
+    if (mode === "rich" || !aiAvailable || !result || result.figures.length === 0 || result.describe !== "idle") return;
+    describe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, aiAvailable, result?.rid, result?.describe, result?.figures.length]);
 
   const pick = () => {
     if (!busy) fileInput.current?.click();
@@ -565,31 +678,10 @@ export default function Converter({ locale }: { locale: Locale }) {
             <p className="mt-3 text-center text-xs text-faint sm:mt-1">{d.upload.formats}</p>
             {error && <p className="mt-3 text-center text-sm text-red-600">{error}</p>}
 
-            <div className="mt-6 border-t border-line pt-5">
-              <p className="mb-3 text-[13px] text-muted">{d.upload.samplesLabel}</p>
-              <div className="grid grid-cols-3 gap-2 sm:gap-3">
-                {SAMPLES.map(({ key, Icon }) => (
-                  <button
-                    key={key}
-                    onClick={() => trySample(key)}
-                    className="group flex min-w-0 flex-col items-center gap-1.5 rounded-xl border border-line bg-white p-2 text-center transition hover:border-accent/40 hover:bg-accent-soft sm:flex-row sm:gap-2.5 sm:pr-3 sm:text-left"
-                  >
-                    <span className="relative h-12 w-9 shrink-0 overflow-hidden rounded-md border border-line bg-wash">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={`/samples/${d.locale}-${key}-thumb.jpg`} alt="" loading="lazy" className="h-full w-full object-cover object-top" />
-                    </span>
-                    <span className="min-w-0">
-                      <Icon className="mb-0.5 hidden h-3.5 w-3.5 text-faint group-hover:text-accent sm:block" />
-                      <span className="block text-[13px] font-medium text-ink sm:truncate">{d.upload.samples[key]}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
-        <div className="hidden min-w-0 lg:block">
-          <HeroDemo d={d} />
+        <div className="min-w-0">
+          <CaseShowcase d={d} onTry={trySample} />
         </div>
       </section>
     );
@@ -720,7 +812,13 @@ export default function Converter({ locale }: { locale: Locale }) {
                     </button>
                     <button onClick={download} className="flex items-center gap-1.5 rounded-full bg-ink px-3.5 py-2 text-sm font-medium text-white transition hover:bg-[#1f2738]">
                       <IconDownload className="h-4 w-4" />
-                      {result.isPaid ? d.work.download : d.work.downloadPreview}
+                      {visibleFigs.length
+                        ? result.isPaid
+                          ? d.work.downloadHtml
+                          : d.work.downloadHtmlPreview
+                        : result.isPaid
+                          ? d.work.download
+                          : d.work.downloadPreview}
                     </button>
                   </div>
                 </div>
@@ -817,9 +915,51 @@ export default function Converter({ locale }: { locale: Locale }) {
                 </div>
               )}
 
+              {/* pictures: choose how they come out */}
+              {result.figures.length > 0 && (
+                <div className="mb-4 rounded-2xl border border-line bg-white px-4 py-3 text-sm">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="flex -space-x-2">
+                      {result.figures.slice(0, 4).map((f) => (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img key={f.id} src={f.url} alt="" className="h-8 w-8 rounded-lg border-2 border-white object-cover shadow-sm" />
+                      ))}
+                    </span>
+                    <span className="text-ink">{d.work.figuresFound(result.figures.length)}</span>
+                    <span className="mx-1 hidden h-4 w-px bg-line sm:block" />
+                    <span className="text-xs text-faint">{d.work.output}</span>
+                    <div className="flex rounded-full bg-wash p-0.5">
+                      {(["text", "rich", "both"] as OutputMode[]).map((m) => (
+                        <button
+                          key={m}
+                          onClick={() => chooseMode(m)}
+                          className={`rounded-full px-3 py-1 text-[13px] transition ${mode === m ? "bg-white font-medium text-ink shadow-sm" : "text-muted hover:text-ink"}`}
+                        >
+                          {d.work.modes[m]}
+                        </button>
+                      ))}
+                    </div>
+                    {result.describe === "running" && (
+                      <span className="flex items-center gap-1.5 text-xs text-muted">
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+                        {d.work.describing(result.descDone, result.figures.length)}
+                      </span>
+                    )}
+                    {visibleFigs.length > 0 && (
+                      <button onClick={downloadZip} className="ml-auto text-xs text-muted underline-offset-4 hover:text-ink hover:underline">
+                        {d.work.zipAlt}
+                      </button>
+                    )}
+                  </div>
+                  {aiAvailable && result.describe === "idle" && <p className="mt-2 text-xs text-faint">{d.work.modeHint}</p>}
+                </div>
+              )}
+
               {/* the text */}
               <div className="relative rounded-2xl border border-line bg-white p-5 shadow-[0_1px_2px_rgba(13,19,33,.04)] sm:p-7">
                 <MarkdownView
+                  figures={figUrls}
+                  captions={mode === "both"}
                   markdown={display}
                   onMark={(i) => setAccepted((_, j) => (j === i ? false : undefined))}
                   markTitle={(was) => d.fix.hover(was)}

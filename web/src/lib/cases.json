@@ -1,0 +1,126 @@
+{
+ "zh-chat": {
+  "width": 750,
+  "height": 6506,
+  "slices": 4,
+  "secs": 4,
+  "scene": "chat",
+  "markdown": "林晓\n\n*昨天 21:14*\n\n**林晓**：周五的评审我可能要晚到半小时，客户那边临时约了电话。\n\n**我**：没事，我先把议程发群里，你到了直接讲第三部分。\n\n**林晓**：好。第三部分的数据我更新过了，用v3那版，别拿错。\n\n**我**：收到。还有预算表，财务说要在周四下班前交。\n\n**林晓**：预算表我今晚弄完发你。另外会议室订了吗?\n\n**我**：订了7楼大会议室，下午两点到四点。\n\n**林晓**：![收到!](fig:img1)\n\n**林晓**：对了，上午白板上画的路线图我拍下来了，你看看有没有漏的。\n\n**林晓**：![Q3路线图](fig:img2)\n\n**我**：看到了。批量导出那条可以往前挪研发说下周就能提测。\n\n**林晓**：那太好了，我改一下顺序。团队空间还是放十月吗?\n\n**我**：对，设计稿还没定，十月中旬开发比较稳。\n\n**林晓**：行。评审的时候把风险也列一下，大家心里有数。\n\n**我**：好，我整理成一页。\n\n**林晓**：这篇讲交付风险的文章不错，你有空看看。\n\n**林晓**：![项目延期前，你应该和客户谈的五 件事 别等到最后一周才开口:怎样 提前暴露风险、](fig:img3)\n\n*今天09:02*\n\n**林晓**：早。刚看到甲方邮件，他们希望把交付日期提前到15号，我们评估一下风险再回复。\n\n**我**：我觉得可以谈，但测试时间会被压缩，最好让他们先确认需求不再改\n\n**林晓**：同意。那评审的时候把这条列成风险项，大家一起定。\n\n**我**：好，我加到议程最后一项。\n\n**林晓**：另外法务那边问合同扫描件什么时候给，你手上有吗?\n\n**我**：在我邮箱里，我十点前转给你和法务。\n\n**林晓**：好，辛苦。下午三点前能把议程终稿发出来吗?\n\n**我**：没问题，两点半前发。\n\n**我**：![好耶](fig:img4)\n\n**林晓**：哈哈，那周五见。\n\n*周五 17:40*\n\n**林晓**：评审结束了，辛苦!结论我整理一下发你确认。\n\n**我**：好。交付日期那条最后怎么定的?\n\n**林晓**：先答应18号，比客户要的晚三天，但测试能保住。他们下周一回复。\n\n**我**：挺好，这样大家都不用熬夜了。\n\n**林晓**：验证码的问题陈静找到原因了，是短信通道晚高峰限流，下周换一家备用通道。\n\n**我**：那客服那边要不要先发个说明?\n\n**林晓**：要的，你帮忙起草一下?两三句话就行。\n\n**我**：可以，今晚发你。\n\n**林晓**：还有，下周三团建，大家投票选了爬山，你记得穿运动鞋。\n\n**我**：哈哈，好的，我去买双新的。\n\n**林晓**：![沖鸭](fig:img5)\n\n**我**：周末愉快!",
+  "figures": [
+   {
+    "id": "img1",
+    "ocrText": "收到!",
+    "desc": "表情包：笑脸图案配文字“收到！”"
+   },
+   {
+    "id": "img2",
+    "ocrText": "Q3路线图",
+    "desc": "截图：Q3 路线图配手绘线条和便签贴纸。"
+   },
+   {
+    "id": "img3",
+    "ocrText": "项目延期前，你应该和客户谈的五 件事 别等到最后一周才开口:怎样 提前暴露风险、",
+    "desc": "链接卡片：《项目延期前，你应该和客户谈的五件事》— 少数派"
+   },
+   {
+    "id": "img4",
+    "ocrText": "好耶",
+    "desc": "表情包：粉色笑脸配星星装饰，下方写着“好耶”。"
+   },
+   {
+    "id": "img5",
+    "ocrText": "沖鸭",
+    "desc": "表情包：一个笑脸饼干图案，旁边有星星装饰，下方写着“冲鸭”。"
+   }
+  ],
+  "chars": 840
+ },
+ "en-chat": {
+  "width": 750,
+  "height": 7146,
+  "slices": 4,
+  "secs": 4,
+  "scene": "chat",
+  "markdown": "Maya\n\n**Me**：Yesterday 9:14 PM\n\n**Maya**：I might be 30 minutes late for Friday's review - a client call just came up.\n\n**Me**：No problem. I'll share the agenda and you can jump in at part three.\n\n**Mava**：Great. I updated the numbers in part three, please use the v3 deck.\n\n**Me**：Got it. Finance also needs the budget sheet by Thursday evening.\n\n**Maya**：I'Il finish it tonight and send it over. Did you book a room?\n\n**Me**：Yes, the big room on the 7th floor, 2 to 4 PM.\n\n**Maya**：![X Got it!](fig:img1)\n\n**Maya**：Oh, I took a photo of the roadmap we drew on the whiteboard this morning. Anything missing?\n\n**Maya**：![Q3 roadmap](fig:img2)\n\n**Me**：Looks right. Bulk export can move up - engineering says it's ready for QA next week.\n\n**Maya**：Great, I'Il reorder it. Are team spaces still October?\n\n**Me**：Yes, the designs aren't final. Mid-October is safer.\n\n**Mava**：OK. Let's list the risks in the review too.\n\n**Me**：Sure, I'Il put them on one slide.\n\n**Maya**：This article on delivery risk is worth a read\n\n**Maya**：![Five things to tell a client before a pr](fig:img3)\n\n**Me**：Today 9:02 AM\n\n**Maya**：Morning! The client wants to move delivery up to the 15th. Let's check the risk before we reply.\n\n**Me**：We can talk about it, but testing gets squeezed. They should freeze the scope first.\n\n**Maya**：Agreed. Let's list it as a risk in the review and decide together.\n\n**Me**：Sure, adding it as the last agenda item.\n\n**Maya**：Legal is asking for the signed contract scan. Do you have it?\n\n**Me**：It's in my inbox. I'll forward it to you and legal before 10.\n\n**Mava**：Thanks! Can the final agenda go out before 3 PM?\n\n**Me**：Sure, by 2:30.\n\n**Me**：![Yay](fig:img4)\n\n**Maya**：Haha, see you Friday.\n\n**Me**：Friday 5:40 РM\n\n**Maya**：Review's done - great job! l'II write up the decisions and send them to you\n\n**Me**：Thanks. What did we land on for the delivery date?\n\n**Maya**：We offered the 18th: three days later than they asked, but testing stays intact. They'I reply Monday.\n\n**Me**：Good call, nobody has to pull all-nighters.\n\n**Mava**：Priya found the verification bug: the SMS provider throttles at peak hours. We're adding a backup next week.\n\n**Me**：Should support send customers a note first?\n\n**Mava**：Yes - could you draft it? Two or three sentences\n\n**Me**：Sure, you'll have it tonight.\n\n**Maya**：Also, the team offsite is Wednesday. Everyone voted for hiking, so bring proper shoes\n\n**Me**：Ha, time to buy new ones.\n\n**Maya**：![Let's go!](fig:img5)\n\n**Me**：Have a great weekend!",
+  "figures": [
+   {
+    "id": "img1",
+    "ocrText": "X Got it!",
+    "desc": "Sticker: A smiling emoji with stars and the text \"Got it!\""
+   },
+   {
+    "id": "img2",
+    "ocrText": "Q3 roadmap",
+    "desc": "Screenshot: Q3 roadmap with blue lines, green wavy line, and red circle on a textured background."
+   },
+   {
+    "id": "img3",
+    "ocrText": "Five things to tell a client before a pr",
+    "desc": "Link card: “Five things to tell a client before a project slips” — Medium"
+   },
+   {
+    "id": "img4",
+    "ocrText": "Yay",
+    "desc": "Sticker: A pink smiling face with stars and the text \"Yay\"."
+   },
+   {
+    "id": "img5",
+    "ocrText": "Let's go!",
+    "desc": "Sticker: A smiling cracker emoji with stars and the text \"Let's go!\""
+   }
+  ],
+  "chars": 1849
+ },
+ "zh-meeting": {
+  "width": 828,
+  "height": 2472,
+  "slices": 2,
+  "secs": 3,
+  "scene": "meeting",
+  "markdown": "**Q3产品评审会**\n\n妙记・2026年9月10日 14:00・42分钟\n\n**王磊00**：01:12\n\n我们先过一下上周的遗留问题。登录页的改版已经上线，转化率比改版前高了大约百分之八，这个数据还需要再观察一周。\n\n**陈静00**：03:40\n\n补充一点，移动端的注册流程还有一个问题，验证码偶尔收不到，客服这周收到了十几条反馈。\n\n**王磊00**：04:25这个优先级要提上来。陈静你这边能不能周三前给一个排查结论?\n\n**陈静00**：04:51\n\n可以，我今天下午就和后端一起看日志。初步怀疑是短信通道在晚高峰限流。\n\n赵然 00:06:02接下来是新功能的排期。批量导出做完了，下周一发灰度;团队空间还在设计阶段，预计十月中旬开发。\n\n**王磊00**：07:18\n\n批量导出灰度的比例定多少?我建议先放百分之十，观察两天没问题再全量。\n\n**赵然00**：07:45可以，百分之十。另外导出文件超过五十兆的情况我们做了分片，需要测试重点看一下。\n\n**陈静00**：08:30测试这边人手有点紧，下周还要回归支付流程。能不能把团队空间的测试往后放?\n\n**王磊00**：09:02\n\n团队空间本来就在十月，不冲突。支付回归优先，导出第二。\n\n**赵然 00:10:15**\n\n还有一件事，客户希望交付提前到十五号，我们需要评估一下。\n\n**王磊00**：11:40\n\n这个我和林晓周五评审时再定。大家先把风险点写到文档里。\n\n**陈静00**：12:05\n\n好，我把验证码和测试人手这两条先写上。\n\n**王磊00**：12:48\n\n**那今天的结论是**：验证码问题最高优先级，批量导出按计划灰度，团队空间的设计稿下周五评审。散会。",
+  "figures": [],
+  "chars": 621
+ },
+ "en-meeting": {
+  "width": 828,
+  "height": 2780,
+  "slices": 3,
+  "secs": 3,
+  "scene": "article",
+  "markdown": "## Q3 Product Review\n\nTranscript . Sep 10, 2026-2:00 РM . 42 min\n\nDaniel 00:01:12\n\nLet's start with last week's open items. The new login page is live, and conversion is up about eight percent. We should watch it for another week.\n\nPriya 00:03:40\n\nOne more thing on mobile sign-up: verification codes sometimes don't arrive. Support got more than ten tickets this week.\n\nDaniel 00:04:25\n\nThat needs to move up. Priya, can you get us a root cause by Wednesday?\n\nPriya 00:04:51\n\nYes, I'Il go through the logs with the backend team this afternoon. My guess is the SMS provider throttles at peak hours.\n\nLeo 00:06:02\n\nNext, the roadmap. Bulk export is done and goes to beta on Monday. Team spaces are still in design; development starts mid-October.\n\nDaniel 00:07:18\n\nWhat share of users gets the export beta? l'd start with ten percent and go wide after two quiet days.\n\nLeo 00:07:45\n\nTen percent works. Files over fifty megabytes are split into chunks, so QA should focus on that.\n\nPriya 00:08:30\n\nQA is stretched - we also need to re-test the рayment flow next week. Can team spaces testing move later?\n\nDaniel 00:09:02\n\nTeam spaces are October anyway, so no conflict. Payments first, export second.\n\nLeo 00:10:15\n\nOne more thing: the client wants delivery moved up to the 15th. We need to assess that.\n\nDaniel 00:11:40\n\nMaya and I will decide at Friday's review. Please add your risks to the doc first.\n\nPriya 00:12:05\n\nWill do - verification codes and QA capacity.\n\nDaniel 00:12:48\n\nSo today's decisions: the verification bug is top priority, bulk export ships to beta as planned, and team space designs get reviewed next Friday. Thanks all.",
+  "figures": [],
+  "chars": 1334
+ },
+ "zh-article": {
+  "width": 828,
+  "height": 2856,
+  "slices": 3,
+  "secs": 2,
+  "scene": "article",
+  "markdown": "## 为什么长截图这么难转成文字?\n\nLong2Text编辑部・5分钟阅读\n\n手机截图越来越长:一段聊天记录、一篇公众号文章，动辄上万像素。可一旦想把里面的文字拿出来，常见的工具要么直接报错，要么丢掉一大段。\n\n![图片](fig:img1)\n\n图1:-张长截图，往往比屏幕高出十几倍\n\n## 问题一:图片太长\n\n大多数识别服务会先把图片缩小到固定尺寸再识别。一张一万像素高的截图被压缩后，每个字只剩几个像素，自然认不出来。\n\n更麻烦的是，很多服务对上传大小有限制，超长截图连传都传不上去。\n\n## 问题二:切开会断字\n\n把长图切成几段是常见做法，但切口正好落在一行字中间时，上下两段都只拿到半行。解决办法是让相邻两段互相重叠，再按位置去重。\n\n## 问题三:拼回去没了结构\n\n就算每个字都认对了，拿到的也只是一行一行的碎句。谁说的、什么时候说的、哪里是标题，全都丢了。\n\n## 我们的做法\n\n在浏览器里把长图切成互相重叠的小段所有小段同时识别，太小的字自动放大重认按行距和位置拼回段落，聊天记录标出说话人表情包和图片裁出来，放回原来的位置\n\n这样处理后，一张几万像素的长截图也能在十几秒内变回一篇排版完整的文字。\n\n## 还剩下什么难题\n\n识别引擎也会自信地认错字，尤其是嵌在截图里的小截图。我们会结合上下文让AI校对这些地方，并且把每一处改动都标出来，让你决定用不用。\n\n另一个难题是图表和手写内容。它们没有标准的文字，只能用一句描述来代替，这部分还在持续改进。\n\n## 写在最后\n\n长截图本来只是为了方便分享，却常常变成信息的死胡同。希望它们能重新变回可以搜索、复制、编辑的文字",
+  "figures": [
+   {
+    "id": "img1",
+    "ocrText": "",
+    "desc": "其他：像素风格的山景与月亮图案"
+   }
+  ],
+  "chars": 622
+ },
+ "en-article": {
+  "width": 828,
+  "height": 3570,
+  "slices": 3,
+  "secs": 3,
+  "scene": "article",
+  "markdown": "## Why are long screenshots so hard\n\n## to turn into text?\n\nLong2Text Journal . 5 min read\n\nPhone screenshots keep getting longer: a chat history or a full article can be tens of thousands of pixels tall. Yet the moment you try to pull the text out, most tools fail or silently drop whole sections.\n\n![image](fig:img1)\n\nFigure 1: a long screenshot is often ten screens tall\n\n## Problem one: the image is too tall\n\nMost recognition services first shrink an image to a fixed size. A screenshot 10,000 pixels tall ends up with only a few pixels per letter, and the text becomes unreadable.\n\nWorse, many services cap the upload size, so very long screenshots can't even be sent.\n\n## Problem two: cutting breaks lines\n\nCutting the image into pieces is the obvious fix, but when a cut lands in the middle of a line, both pieces get half of it. The answer is to overlap neighbouring pieces and remove duplicates by position.\n\n## Problem three: the structure is gone\n\nEven with every letter right, you get a pile of broken lines. Who said what, when, and which line was a heading - all lost.\n\n## What we do\n\nSplit the image into overlapping slices in the browser Read all slices at once, and zoom in on tiny text Rebuild paragraphs by position, with speakers for chats Cut out stickers and photos and put them back in place\n\nWith that, even a screenshot tens of thousands of pixels tall comes back as a clean, well-formatted document in about fifteen seconds.\n\n## What's still hard\n\nOCR engines are sometimes confidently wrong, especially on a screenshot inside a screenshot. We let Al proofread those spots using the surrounding context, and mark every change so you decide whether to keep it.\n\nCharts and handwriting are the other challenge. They have no clean text, so the best we can do is describe them in a sentence, and that part is still improving.\n\n## Finally\n\nLong screenshots were meant to make sharing easy, yet they often become a dead end for information. We'd like them to be searchable, copyable, editable text again.",
+  "figures": [
+   {
+    "id": "img1",
+    "ocrText": "",
+    "desc": "Sticker: A pixelated mountain range with a yellow sun or moon in the sky."
+   }
+  ],
+  "chars": 1621
+ }
+}
