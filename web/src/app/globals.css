@@ -2,39 +2,75 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #0d1321;
+  --accent: #3355ff;
+  --accent-hover: #2442e6;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-ink: #0d1321;
+  --color-muted: #5a6376;
+  --color-faint: #8b93a5;
+  --color-line: #e7e9ee;
+  --color-wash: #f6f7f9;
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: #eef1ff;
+  --font-sans: var(--font-geist-sans), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-/* Force light mode — page UI uses hardcoded light colors */
+html {
+  scroll-behavior: smooth;
+}
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Upload dropzone animation */
-.dropzone-active {
-  border-color: #6366f1 !important;
-  background-color: #eef2ff !important;
+::selection {
+  background: #d9e0ff;
 }
 
-/* Result blur effect for paywall */
-.text-blur {
-  filter: blur(4px);
-  user-select: none;
-  pointer-events: none;
+/* focus ring that matches the brand */
+:where(a, button, [role="button"], summary, input):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
-/* Gradient fade for preview */
-.preview-fade {
-  mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+/* hero demo: a scan band moving down the screenshot */
+@keyframes l2t-scan {
+  0% { transform: translateY(-40%); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(560%); opacity: 0; }
 }
+.l2t-scan {
+  animation: l2t-scan 3.6s cubic-bezier(0.45, 0, 0.35, 1) infinite;
+}
+
+/* output lines appear one by one */
+@keyframes l2t-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.l2t-rise {
+  opacity: 0;
+  animation: l2t-rise 0.5s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .l2t-scan, .l2t-rise { animation: none; opacity: 1; }
+}
+
+/* FAQ disclosure marker */
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details[open] .l2t-chevron { transform: rotate(45deg); }
