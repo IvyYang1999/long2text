@@ -6,6 +6,7 @@ import { splitImageInBrowser } from "@/lib/client-splitter";
 import { recognize, cropFigures, type Figure } from "@/lib/pipeline";
 import { structure, previewOf, textInside, type SegmentResult, type Scene, type DetectedScene, type Line, type FigureRef } from "@/lib/structure";
 import { withImageFiles, figureIds, toHtml, toStyledHtml, makeZip, applyMode, type OutputMode } from "@/lib/export";
+import { hedged } from "@/lib/hedge";
 import { pickCandidates, runCorrections, markCorrections, changedSpan, type Correction } from "@/lib/ai-correct";
 import { FREE_CHARS, PREVIEW_PERCENT, dicts, type Locale } from "@/lib/i18n";
 import MarkdownView from "@/components/MarkdownView";
@@ -564,16 +565,22 @@ export default function Converter({ locale }: { locale: Locale }) {
           const f = queue.shift()!;
           try {
             const image = await toDataUrl(f.blob, 384);
-            const res = await fetch("/api/describe", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ image, lang: d.locale }),
-              signal: AbortSignal.timeout(20_000),
-            });
-            if (res.ok) {
-              const { text } = await res.json();
-              if (text) mutate(r.rid, (x) => rebuild({ ...x, figures: x.figures.map((g) => (g.id === f.id ? { ...g, desc: text } : g)), dirty: x.dirty || !!x.id }, labels));
-            }
+            // most answers take < 1.5 s but some stall: hedge after 3 s, give up after 15 s
+            const text = await hedged<string>(
+              async (signal) => {
+                const res = await fetch("/api/describe", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ image, lang: d.locale }),
+                  signal,
+                });
+                if (!res.ok) return null;
+                const j = await res.json();
+                return typeof j.text === "string" && j.text ? j.text : null;
+              },
+              { hedgeAfter: 3_000, timeout: 15_000 },
+            );
+            if (text) mutate(r.rid, (x) => rebuild({ ...x, figures: x.figures.map((g) => (g.id === f.id ? { ...g, desc: text } : g)), dirty: x.dirty || !!x.id }, labels));
           } catch {}
           done++;
           mutate(r.rid, (x) => ({ ...x, descDone: done }));

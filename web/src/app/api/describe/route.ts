@@ -3,12 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 export const maxDuration = 20;
 
 const ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions";
-const MODEL_DEFAULT = "Qwen/Qwen3.5-4B"; // free vision model; 0.5–1.6 s per image in a 2026-09-11 test
+// Free vision model. 2026-09-11 evals (vault: 评测-2026-09-11-Qwen3.5-4B图片描述.md and the
+// prompt A/B in 日志): median ≈ 0.7 s, but 8–17 % of calls stall to the timeout — the client hedges.
+// The prompt forbids guessing unseen material/identity ("cookie", "moon": 11 → 3 of 24) and asks
+// for the card source verbatim.
+const MODEL_DEFAULT = "Qwen/Qwen3.5-4B";
 const MAX_BYTES = 400_000;
 
 const PROMPTS = {
-  zh: "这是从一张聊天记录或文章长截图里裁出来的一块图片。用一句中文说明它，格式是「类型：内容」。类型从这些里选：表情包、照片、截图、链接卡片、图表、文件、其他。内容不超过 30 个字，写清楚画面里有什么；图里有文字就用引号照抄主要文字。带标题、摘要和来源（如公众号、网站名）的卡片是链接卡片，写成「链接卡片：《标题》— 来源」。只输出这一句。",
-  en: "This is a picture cut out of a long screenshot of a chat or an article. Describe it in one line formatted as \"Type: content\". Type is one of: Sticker, Photo, Screenshot, Link card, Chart, File, Other. Content is at most 20 words saying what is shown; quote the main text if there is any. A card with a title, a summary and a source (a site or publication name) is a link card: write \"Link card: “Title” — source\". Output only that line.",
+  zh: "这是从一张聊天记录或文章长截图里裁出来的一块图片。用一句中文说明它，格式是「类型：内容」。类型从这些里选：表情包、照片、截图、链接卡片、图表、插画、文件、其他。内容不超过 30 个字，只写看得见的形状、颜色、人物动作和文字；看不出来的身份、材质、品种、意图不要猜。图里有文字就用引号照抄主要文字。带标题、摘要和来源的卡片是链接卡片，写成「链接卡片：《标题》— 来源」，来源按卡片底部原样完整照抄。只输出这一句。",
+  en: "This is a picture cut out of a long screenshot of a chat or an article. Describe it in one line formatted as \"Type: content\". Type is one of: Sticker, Photo, Screenshot, Link card, Chart, Illustration, File, Other. Content is at most 20 words and only states what is visible: shapes, colours, actions and text. Do not guess identity, material, species or intent you cannot see. Quote the main text if there is any. A card with a title, a summary and a source is a link card: write \"Link card: “Title” — source\", copying the source line at the bottom of the card exactly and completely. Output only that line.",
 };
 
 /**
@@ -31,7 +35,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid image" }, { status: 400 });
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
+  const timer = setTimeout(() => controller.abort(), 12_000);
   try {
     const model = process.env.SILICONFLOW_VISION_MODEL?.trim() || MODEL_DEFAULT;
     const res = await fetch(ENDPOINT, {
