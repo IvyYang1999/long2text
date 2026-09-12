@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:seo": "node --test tests/seo.test.mjs",
+    "test:seo:smoke": "node tests/seo-smoke.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

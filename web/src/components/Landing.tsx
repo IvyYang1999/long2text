@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CONTACT_EMAIL, type Dict } from "@/lib/i18n";
 import { IconSlices, IconBolt, IconDoc, IconChat, IconMeeting, IconArticle, IconCheck, IconLock } from "@/components/Icons";
 import { Wordmark } from "@/components/Logo";
+import { seoGuides } from "@/lib/seo-guides";
 
 const stepIcons = [IconSlices, IconBolt, IconDoc];
 const useIcons = { chat: IconChat, meeting: IconMeeting, article: IconArticle } as const;
@@ -116,12 +117,18 @@ export function SiteFooter({ d }: { d: Dict }) {
   const base = d.home === "/" ? "" : d.home;
   return (
     <footer className="border-t border-line">
+      {d.locale === "en" && (
+        <nav aria-label="Conversion guides" className="mx-auto flex max-w-6xl flex-wrap gap-x-6 gap-y-3 px-5 pt-8 text-sm text-muted">
+          <span className="font-medium text-ink">Conversion guides</span>
+          {seoGuides.map(guide => <Link key={guide.slug} href={`/${guide.slug}`} className="text-accent underline-offset-4 hover:underline">{guide.label}</Link>)}
+        </nav>
+      )}
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-5 py-8 text-sm text-faint sm:flex-row">
         <div className="flex items-center gap-3">
           <Wordmark className="scale-90" />
           <span>© 2026 · {d.footer.rights}</span>
         </div>
-        <nav className="flex gap-5">
+        <nav className="flex flex-wrap justify-center gap-x-5 gap-y-3">
           <Link href={`${base}/privacy`} className="hover:text-ink">
             {d.footer.privacy}
           </Link>

@@ -18,10 +18,10 @@ export default function SiteHeader({ locale }: { locale: Locale }) {
           <Wordmark />
         </Link>
         <nav className="flex items-center gap-1 text-sm text-muted sm:gap-2">
-          <a href={`${d.home === "/" ? "" : d.home}#how`} className="hidden rounded-full px-3 py-1.5 hover:text-ink md:block">
+          <a href={`${d.home}#how`} className="hidden rounded-full px-3 py-1.5 hover:text-ink md:block">
             {d.nav.how}
           </a>
-          <a href={`${d.home === "/" ? "" : d.home}#pricing`} className="hidden rounded-full px-3 py-1.5 hover:text-ink sm:block">
+          <a href={`${d.home}#pricing`} className="hidden rounded-full px-3 py-1.5 hover:text-ink sm:block">
             {d.nav.pricing}
           </a>
           <Link href={d.other.href} hrefLang={d.other.hreflang} onClick={setLangCookie} className="rounded-full px-3 py-1.5 hover:text-ink">
