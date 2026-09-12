@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 const base = new URL(process.argv[2] ?? 'http://localhost:3123');
 const site = 'https://long2text.com';
 const guides = ['chat-screenshot-to-text', 'screenshot-to-markdown'];
-const routes = ['', 'zh', 'privacy', 'terms', 'zh/privacy', 'zh/terms', ...guides];
+const comparison = 'long-screenshot-to-markdown-test';
+const routes = ['', 'zh', 'privacy', 'terms', 'zh/privacy', 'zh/terms', ...guides, comparison];
 const descriptions = new Set();
 const htmlByRoute = new Map();
 for (const route of routes) {
@@ -21,7 +22,7 @@ for (const route of routes) {
   assert.ok(!descriptions.has(description), `${route}: unique description`);
   descriptions.add(description);
   const languages = [...html.matchAll(/<link rel="alternate"[^>]*hrefLang="([^"]+)"/gi)].map(m => m[1]);
-  assert.deepEqual(languages.sort(), (guides.includes(route) ? ['en', 'x-default'] : ['en', 'zh-CN', 'x-default']).sort(), `${route}: actual translations only`);
+  assert.deepEqual(languages.sort(), ([...guides, comparison].includes(route) ? ['en', 'x-default'] : ['en', 'zh-CN', 'x-default']).sort(), `${route}: actual translations only`);
   console.log(`PASS /${route}: status, H1, canonical, description, hreflang, robots`);
 }
 for (const slug of guides) {
@@ -41,7 +42,20 @@ for (const resource of ['samples/en-chat.jpg', 'samples/en-article.jpg']) {
 const sitemapResponse = await fetch(new URL('/sitemap.xml', base));
 assert.equal(sitemapResponse.status, 200);
 const sitemap = await sitemapResponse.text();
-assert.equal((sitemap.match(/<loc>/g) ?? []).length, 8);
+assert.equal((sitemap.match(/<loc>/g) ?? []).length, 9);
+assert.ok(sitemap.includes(`<loc>${site}/${comparison}</loc>`));
+for (const route of ['', ...guides]) assert.ok(htmlByRoute.get(route).includes(`href="/${comparison}"`));
+const article = htmlByRoute.get(comparison);
+assert.match(article, /BreadcrumbList/);
+assert.match(article, /not an independent review/);
+assert.match(article, /No speed ranking/);
+for (const file of ['keep-en-chat.raw.md', 'keep-en-article.raw.md', 'long2text-en-chat.preview.md', 'long2text-en-article.preview.md']) {
+  const resource = `/research/screenshot-markdown-2026-09-12/${file}`;
+  assert.ok(article.includes(`href="${resource}"`));
+  const response = await fetch(new URL(resource, base), {signal: AbortSignal.timeout(15000)});
+  assert.equal(response.status, 200, resource);
+  assert.ok((await response.text()).length > 100);
+}
 for (const slug of guides) assert.ok(sitemap.includes(`<loc>${site}/${slug}</loc>`));
 assert.ok(!sitemap.includes('<lastmod>'));
 const robots = await (await fetch(new URL('/robots.txt', base))).text();

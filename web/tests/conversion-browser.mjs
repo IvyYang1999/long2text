@@ -24,7 +24,8 @@ async function pageFor(width=1280) {
   });
   await page.route('**/api/auth/session', r => r.fulfill({json:{}}));
   await page.route('**/api/correct', r => r.fulfill({json:{enabled:false}}));
-  await page.route('**/api/ocr', r => r.fulfill({json:{success:true,blocks}}));
+  // The provider handshake is GET; the existing OCR fixture represents POST.
+  await page.route('**/api/ocr', r => r.fulfill({json:r.request().method()==='GET'?{provider:'tencent'}:{success:true,blocks}}));
   return {context,page};
 }
 async function noOverflow(page, label) {
@@ -152,7 +153,9 @@ try {
     await page.locator('input[type=file]').setInputFiles({name:'test.txt',mimeType:'text/plain',buffer:Buffer.from('invalid')});
     await page.getByRole('status').filter({hasText:/image/i}).waitFor();
     assert.equal((await page.evaluate(()=>window.__testEvents)).length,0);
-    await page.route('**/api/ocr',r=>r.fulfill({status:503,json:{success:false}}));
+    await page.route('**/api/ocr',r=>r.request().method()==='GET'
+      ? r.fulfill({json:{provider:'tencent'}})
+      : r.fulfill({status:503,json:{success:false}}));
     await page.locator('input[type=file]').setInputFiles(payload);
     await page.getByRole('status').filter({hasText:/failed|try again/i}).waitFor({timeout:25000});
     assert.ok((await page.evaluate(()=>window.__testEvents.map(e=>e.name))).includes('ocr_failed'));

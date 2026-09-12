@@ -3,6 +3,7 @@ import { CONTACT_EMAIL, type Dict } from "@/lib/i18n";
 import { IconSlices, IconBolt, IconDoc, IconChat, IconMeeting, IconArticle, IconCheck, IconLock } from "@/components/Icons";
 import { Wordmark } from "@/components/Logo";
 import { seoGuides } from "@/lib/seo-guides";
+import { comparison } from "@/lib/seo-comparison";
 
 const stepIcons = [IconSlices, IconBolt, IconDoc];
 const useIcons = { chat: IconChat, meeting: IconMeeting, article: IconArticle } as const;
@@ -121,6 +122,7 @@ export function SiteFooter({ d }: { d: Dict }) {
         <nav aria-label="Conversion guides" className="mx-auto flex max-w-6xl flex-wrap gap-x-6 gap-y-3 px-5 pt-8 text-sm text-muted">
           <span className="font-medium text-ink">Conversion guides</span>
           {seoGuides.map(guide => <Link key={guide.slug} href={`/${guide.slug}`} className="text-accent underline-offset-4 hover:underline">{guide.label}</Link>)}
+          <Link href={`/${comparison.slug}`} className="text-accent underline-offset-4 hover:underline">{comparison.label}</Link>
         </nav>
       )}
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-5 py-8 text-sm text-faint sm:flex-row">

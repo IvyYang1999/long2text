@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { SITE } from "@/lib/seo";
 import { seoGuides } from "@/lib/seo-guides";
+import { comparison } from "@/lib/seo-comparison";
 
 const pages = ["", "privacy", "terms"];
 
@@ -16,7 +17,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     ];
   });
   // Omit lastmod until we have per-page content dates, rather than claiming every build edits every page.
-  return [...localized, ...seoGuides.map(({ slug }) => ({
+  return [...localized, ...[...seoGuides, comparison].map(({ slug }) => ({
     url: `${SITE}/${slug}`,
     changeFrequency: "monthly" as const,
     priority: 0.8,

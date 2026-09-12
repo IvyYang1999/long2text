@@ -46,8 +46,8 @@ test('private metadata remains noindex', () => {
 
 test('sitemap includes both guides without inventing translations or modification dates', () => {
   const items = load('src/app/sitemap.ts').default();
-  assert.equal(items.length, 8);
-  assert.equal(new Set(items.map(item => item.url)).size, 8);
+  assert.equal(items.length, 9);
+  assert.equal(new Set(items.map(item => item.url)).size, 9);
   for (const slug of ['chat-screenshot-to-text', 'screenshot-to-markdown']) {
     const item = items.find(item => item.url === `${SITE}/${slug}`);
     assert.ok(item, `missing ${slug}`);
@@ -55,6 +55,21 @@ test('sitemap includes both guides without inventing translations or modificatio
   }
   assert.ok(items.every(item => item.lastModified === undefined), 'omit lastmod unless tied to a content update');
   assert.ok(items.every(item => !item.url.includes('history') && !item.url.includes('/api/')));
+});
+
+test('comparison article is discoverable and honest about its evidence boundary', () => {
+  const { comparison } = load('src/lib/seo-comparison.ts');
+  const items = load('src/app/sitemap.ts').default();
+  assert.ok(items.some(item => item.url === `${SITE}/${comparison.slug}`));
+  const page = readFileSync(resolve(import.meta.dirname, `../src/app/(en)/${comparison.slug}/page.tsx`), 'utf8');
+  assert.match(page, /not an independent review/);
+  assert.match(page, /preview only/);
+  assert.match(page, /not a leaderboard/);
+  assert.match(page, /Unable to reach the AI service/);
+  assert.match(page, /No speed ranking/);
+  for (const name of ['keep-en-chat.raw.md', 'keep-en-article.raw.md', 'long2text-en-chat.preview.md', 'long2text-en-article.preview.md']) {
+    assert.ok(readFileSync(resolve(import.meta.dirname, '../public/research/screenshot-markdown-2026-09-12', name), 'utf8').length > 100);
+  }
 });
 
 test('www redirect is permanent, exact-host scoped and retains the path', async () => {
