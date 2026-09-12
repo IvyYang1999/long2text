@@ -22,6 +22,13 @@ export default function RootShell({ lang, children }: { lang: string; children: 
     <html lang={lang}>
       <body className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-white antialiased`}>
         <SessionProvider><GrowthSession />{children}</SessionProvider>
+        {/* 反馈入口。同源代理见 src/app/support/[...path]/route.ts；用户不点就什么都不发生。 */}
+        <Script
+          src="/support/widget.js"
+          strategy="afterInteractive"
+          data-product="long2text"
+          data-api="/support"
+        />
         <Script
           src="/dc-analytics.js"
           strategy="afterInteractive"
