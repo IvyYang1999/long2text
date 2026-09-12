@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { Wordmark } from "@/components/Logo";
 import { dicts, type Locale } from "@/lib/i18n";
+import { trackFunnel, trackLoginStart } from "@/lib/analytics";
 
 export default function SiteHeader({ locale }: { locale: Locale }) {
   const d = dicts[locale];
@@ -42,8 +43,10 @@ export default function SiteHeader({ locale }: { locale: Locale }) {
             </>
           ) : (
             <button
-              onClick={() => signIn("google")}
-              data-ga-click="login_click"
+              onClick={() => {
+                trackLoginStart("header");
+                void signIn("google").catch(() => trackFunnel("login_failed", { entry_point: "header", failure_stage: "login" }));
+              }}
               className="ml-1 rounded-full border border-line px-4 py-1.5 font-medium text-ink transition hover:border-ink"
             >
               {d.nav.signIn}

@@ -11,7 +11,8 @@ import { pickCandidates, runCorrections, markCorrections, changedSpan, type Corr
 import { FREE_CHARS, PREVIEW_PERCENT, dicts, type Locale } from "@/lib/i18n";
 import MarkdownView from "@/components/MarkdownView";
 import CaseShowcase from "@/components/CaseShowcase";
-import { trackFunnel } from "@/lib/analytics";
+import { trackFunnel, trackLoginStart, durationBucket, type InputMethod, type GrowthFields, type ResultAccess } from "@/lib/analytics";
+import { GrowthView } from "@/components/GrowthSignals";
 import {
   IconUpload,
   IconLock,
@@ -299,7 +300,7 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
 
   // ── the main flow ──
   const handleFile = useCallback(
-    async (file: File) => {
+    async (file: File, inputMethod: InputMethod = "file") => {
       if (phaseRef.current === "splitting" || phaseRef.current === "processing") return;
       if (!file.type.startsWith("image/")) {
         setError(d.upload.badFile);
@@ -307,14 +308,16 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
       }
       const url = URL.createObjectURL(file);
       phaseRef.current = "splitting";
-      trackFunnel("upload_started");
+      trackFunnel("upload_started", { input_method: inputMethod });
       setPendingUrl(url);
       setError("");
       setPhase("splitting");
       setLive({ finished: 0, total: 0, enhancing: 0, etaSec: null, markdown: "" });
       const t0 = Date.now();
+      let failureStage: GrowthFields["failure_stage"] = "prepare";
       try {
         const split = await prepareOcr(file);
+        failureStage = "recognize";
         setLive((l) => ({ ...l, total: split.segments.length }));
         setPhase("processing");
         const { results: segs, failed, figures: boxes } = await recognize(split.segments, (p) => {
@@ -323,6 +326,7 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
         }, split.provider);
         if (failed.length === split.segments.length) throw new Error(d.work.recognitionFailed);
 
+        failureStage = "assemble";
         const pics: Pic[] = (await cropFigures(file, boxes)).map((f) => ({ ...f, ocrText: textInside(segs, f) }));
         const final = structure(segs, split.width, scene, labels, undefined, figRefs(pics, labels.image));
         const chars = countChars(final.plain);
@@ -368,10 +372,10 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
         setActive(next.length - 1);
         setPhase("done");
         setPendingUrl(null);
-        trackFunnel(failed.length ? "ocr_partial" : "ocr_completed");
+        trackFunnel(failed.length ? "ocr_partial" : "ocr_completed", { input_method: inputMethod, duration_bucket: durationBucket(Date.now() - t0), result_access: chars <= FREE_CHARS ? "free" : "preview" });
         if (willProofread) startAi(r, final.lines);
       } catch (e) {
-        trackFunnel("ocr_failed");
+        trackFunnel("ocr_failed", { input_method: inputMethod, duration_bucket: durationBucket(Date.now() - t0), failure_stage: failureStage });
         setError(e instanceof Error ? e.message : d.work.recognitionFailed);
         setPhase(resultsRef.current.length ? "done" : "error");
         setPendingUrl(null);
@@ -389,7 +393,7 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
       for (const item of e.clipboardData?.items || []) {
         if (item.type.startsWith("image/")) {
           const f = item.getAsFile();
-          if (f) handleFile(f);
+          if (f) handleFile(f, "paste");
           break;
         }
       }
@@ -415,7 +419,7 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
       depth = 0;
       setDragging(false);
       const f = e.dataTransfer?.files?.[0];
-      if (f) handleFile(f);
+      if (f) handleFile(f, "drop");
     };
     window.addEventListener("paste", onPaste);
     window.addEventListener("dragenter", onEnter);
@@ -434,7 +438,7 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
   const trySample = async (key: string) => {
     try {
       const blob = await fetch(`/samples/${d.locale}-${key}.jpg`).then((r) => r.blob());
-      handleFile(new File([blob], `${key}.jpg`, { type: "image/jpeg" }));
+      handleFile(new File([blob], `${key}.jpg`, { type: "image/jpeg" }), "sample");
     } catch {
       setError(d.work.recognitionFailed);
     }
@@ -530,7 +534,7 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
       await navigator.clipboard.writeText(plain);
     }
     setCopied(true);
-    trackFunnel("export_completed", "copy");
+    trackFunnel("export_completed", { method: "copy", result_access: resultAccess() });
     setTimeout(() => setCopied(false), 1500);
   };
 
@@ -539,11 +543,12 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
     a.href = URL.createObjectURL(blob);
     a.download = name;
     a.click();
-    trackFunnel("export_completed", method);
+    trackFunnel("download_started", { method, result_access: resultAccess() });
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     if (result) mutate(result.rid, (x) => ({ ...x, isDownloaded: true }));
   };
   const baseName = () => (result?.name || "long2text").replace(/\.[a-z0-9]+$/i, "");
+  const resultAccess = (): ResultAccess => result && result.totalChars <= FREE_CHARS ? "free" : result?.isPaid ? "paid" : "preview";
 
   // Download: text → .md; with pictures → a typeset, self-contained HTML page
   const download = async () => {
@@ -605,8 +610,10 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
 
   const unlock = async () => {
     if (!result) return;
+    trackFunnel("checkout_clicked");
     if (!session?.user) {
-      signIn("google");
+      trackLoginStart("paywall");
+      void signIn("google").catch(() => trackFunnel("login_failed", { entry_point: "paywall", failure_stage: "login" }));
       return;
     }
     try {
@@ -630,6 +637,7 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
         window.location.href = data.url;
       }
     } catch (e) {
+      trackFunnel("checkout_failed", { failure_stage: "checkout" });
       setError(e instanceof Error ? e.message : "Payment failed");
     }
   };
@@ -1004,11 +1012,11 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
                 />
                 {!result.isPaid && result.totalChars > FREE_CHARS && (
                   <div className="absolute inset-x-0 bottom-0 flex flex-col items-center rounded-b-2xl bg-gradient-to-t from-white via-white/95 to-transparent px-5 pb-8 pt-32 text-center">
+                    <GrowthView key={result.rid} name="paywall_view" access="preview" />
                     <p className="text-lg font-semibold text-ink">{d.paywall.head(PREVIEW_PERCENT)}</p>
                     <p className="mt-1 text-sm text-muted">{d.paywall.full(result.totalChars, result.totalBlocks, unit)}</p>
                     <button
                       onClick={unlock}
-                      data-ga-click={!session?.user ? "login_click" : undefined}
                       className="mt-5 flex h-12 items-center gap-2 rounded-full bg-accent px-7 text-[15px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(51,85,255,.7)] transition hover:bg-accent-hover"
                     >
                       <IconLock className="h-4 w-4" />

@@ -131,7 +131,8 @@ try {
     await page.getByRole('button',{name:'Copied',exact:true}).waitFor();
     const [resultFile]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Download .md',exact:true}).click()]);
     assert.ok((await readFile(await resultFile.path(),'utf8')).includes('public OCR smoke test'));
-    assert.equal((await page.evaluate(()=>window.__testEvents.filter(e=>e.name==='export_completed'))).length,2);
+    assert.equal((await page.evaluate(()=>window.__testEvents.filter(e=>e.name==='export_completed'))).length,1);
+    assert.equal((await page.evaluate(()=>window.__testEvents.filter(e=>e.name==='download_started'))).length,1);
     await page.screenshot({path:join(out,route.slice(1)+'-result.png')});
     await context.close();
     console.log('PASS guide',route,'responsive, keyboard, scroll, full samples, upload, copy, download');

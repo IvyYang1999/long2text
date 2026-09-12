@@ -4,6 +4,7 @@ import { IconSlices, IconBolt, IconDoc, IconChat, IconMeeting, IconArticle, Icon
 import { Wordmark } from "@/components/Logo";
 import { seoGuides } from "@/lib/seo-guides";
 import { comparison } from "@/lib/seo-comparison";
+import { GrowthView } from "@/components/GrowthSignals";
 
 const stepIcons = [IconSlices, IconBolt, IconDoc];
 const useIcons = { chat: IconChat, meeting: IconMeeting, article: IconArticle } as const;
@@ -76,6 +77,7 @@ export function Landing({ d }: { d: Dict }) {
 
       {/* pricing */}
       <section id="pricing" className="scroll-mt-20 mx-auto max-w-6xl px-5 pb-20">
+        <GrowthView name="pricing_view" />
         <h2 className="text-center text-3xl font-bold tracking-tight text-ink">{d.pricing.title}</h2>
         <div className="mx-auto mt-12 grid max-w-3xl gap-6 sm:grid-cols-2">
           {[d.pricing.free, d.pricing.paid].map((p, i) => (

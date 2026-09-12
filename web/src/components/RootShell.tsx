@@ -2,6 +2,7 @@ import Script from "next/script";
 import localFont from "next/font/local";
 import { SessionProvider } from "next-auth/react";
 import "@/app/globals.css";
+import { GrowthSession } from "@/components/GrowthSignals";
 
 // Geist (SIL OFL) variable fonts, self-hosted so builds never depend on Google Fonts
 const geistSans = localFont({
@@ -20,7 +21,7 @@ export default function RootShell({ lang, children }: { lang: string; children: 
   return (
     <html lang={lang}>
       <body className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-white antialiased`}>
-        <SessionProvider>{children}</SessionProvider>
+        <SessionProvider><GrowthSession />{children}</SessionProvider>
         <Script
           src="/dc-analytics.js"
           strategy="afterInteractive"
