@@ -16,7 +16,7 @@ const privacy: Record<"en" | "zh", Doc> = {
     updated: `Last updated ${UPDATED}`,
     contact: "Questions or deletion requests:",
     sections: [
-      { h: "Your screenshots", p: ["Images are split into slices in your browser. Each slice is sent to our server and passed to Tencent Cloud OCR for text recognition. Long2Text does not store your images; slices are discarded once they have been read."] },
+      { h: "Your screenshots", p: ["Your screenshot is sent through our server to Google Cloud Vision for text recognition. Large images may be split in your browser. Tencent Cloud OCR is available as an alternative provider when configured. Long2Text does not store your images; they are processed in memory and discarded after recognition."] },
       { h: "AI proofreading", p: ["When AI proofread is on, a small number of lines the OCR engine was unsure about — together with a few nearby lines of text — are sent to SiliconFlow's model API to fix misreads. You can switch it off at any time; the setting is remembered in your browser.", "Pictures found in your screenshot (stickers, photos) are cut out in your browser. Only if you click “Describe them with AI” are those small crops sent to SiliconFlow's vision model to get a one-line description; the full screenshot is never sent."] },
       { h: "If you sign in", p: ["Google sign-in gives us your name, email address and profile picture, which we use only to link your purchases and history to you.", "Recognized text from images you convert while signed in is saved to our database so you can find it again in History."] },
       { h: "Payments", p: ["Payments are processed by Stripe. We receive a confirmation of the payment, never your card details."] },
@@ -28,7 +28,7 @@ const privacy: Record<"en" | "zh", Doc> = {
     updated: `最后更新：${UPDATED}`,
     contact: "有问题或需要删除数据，请联系：",
     sections: [
-      { h: "你的截图", p: ["图片在你的浏览器里被切成小段。每一段发送到我们的服务器，再交给腾讯云 OCR 识别文字。Long2Text 不保存你的图片，小段图片识别完即丢弃。"] },
+      { h: "你的截图", p: ["截图通过我们的服务器交给 Google Cloud Vision 识别文字。较大的图片可能在浏览器里分段；配置切换时也可使用腾讯云 OCR。Long2Text 不保存你的图片，图片仅在内存中处理，识别后即丢弃。"] },
       { h: "AI 校对", p: ["开启 AI 校对时，识别引擎没把握的少量文字行，连同附近几行文字，会发送给硅基流动（SiliconFlow）的模型接口用于修正错字。你可以随时关掉，这个设置保存在你的浏览器里。", "截图里的表情包、照片等配图在你的浏览器里被裁出来。只有你点击「让 AI 描述这些图片」时，这些小图才会发送给硅基流动的视觉模型生成一句描述；整张截图不会被发送。"] },
       { h: "如果你登录", p: ["通过 Google 登录时，我们会拿到你的名字、邮箱和头像，只用来把你的购买记录和历史记录关联到你。", "登录状态下转换的图片，识别出的文字会保存在我们的数据库里，方便你之后在「历史记录」里找回。"] },
       { h: "付款", p: ["付款由 Stripe 处理。我们只收到付款成功的确认，看不到你的卡号。"] },

@@ -9,6 +9,8 @@
  */
 
 export interface OCRBlock {
+  /** Optional source paragraph hint; never spans image parts. */
+  paragraphId?: string;
   text: string;
   confidence?: number;
   x: number;
@@ -25,6 +27,7 @@ export interface SegmentResult {
 }
 
 export interface Line {
+  paragraphId?: string;
   id: string; // "<segment index>:<block index>" — stable key for corrections
   conf: number; // OCR engine confidence 0-100
   text: string;
@@ -185,6 +188,7 @@ export function mergeSegments(segments: SegmentResult[], corrections?: Map<strin
     let lines: Line[] = seg.blocks
       .map((b, bi) => ({
         id: `${seg.index}:${bi}`,
+        paragraphId: b.paragraphId ? `${seg.index}:${b.paragraphId}` : undefined,
         conf: b.confidence ?? 100,
         text: b.text,
         x: b.x,
@@ -335,7 +339,12 @@ export function buildParagraphs(lines: Line[], imageWidth: number): { paragraphs
       const meta = isTimestamp(rowText(r)) || isTimestamp(rowText(prev));
       const shift = Math.abs(rowLeft(r) - rowLeft(prev)) > lh * 1.6 && rowText(prev).length > 0;
       const tiny = rowText(r).length <= 2 || rowText(prev).length <= 2; // a lone wrapped char has an unreliable box
-      const sizeJump = !tiny && prev.h > 0 && (r.h / prev.h > 1.45 || prev.h / r.h > 1.45);
+      const sourceParagraph = r.cells[0]?.paragraphId;
+      const sameSourceParagraph = !!sourceParagraph && [...r.cells, ...prev.cells].every(c => c.paragraphId === sourceParagraph);
+      // Google glyph boxes shrink for words without ascenders/descenders (e.g.
+      // “deck.”). A source paragraph hint prevents this becoming a new speaker;
+      // spacing, indentation and metadata boundaries still apply normally.
+      const sizeJump = !sameSourceParagraph && !tiny && prev.h > 0 && (r.h / prev.h > 1.45 || prev.h / r.h > 1.45);
       const prevW = rowRight(prev) - rowLeft(prev);
       const curW = rowRight(r) - rowLeft(r);
       // a lone short row (heading / name) followed by a much wider row

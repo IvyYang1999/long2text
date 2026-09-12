@@ -20,7 +20,7 @@ try {
       const u = new URL(r.url());
       if (/google-analytics\.com$|googletagmanager\.com$/.test(u.hostname) || u.pathname === '/api/checkout') unexpected.push(u.hostname + u.pathname);
     });
-    page.on('response', r => { if (new URL(r.url()).pathname === '/api/ocr') responses.push(r.status()); });
+    page.on('response', r => { if (new URL(r.url()).pathname === '/api/ocr' && r.request().method() === 'POST') responses.push(r.status()); });
     await page.goto(base + route);
     await page.getByRole('button', { name: 'Upload screenshot', exact: true }).waitFor();
     // Use the product's existing persisted preference to isolate OCR from optional AI.

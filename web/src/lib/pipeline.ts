@@ -10,6 +10,7 @@ import { cropAndScale } from "./client-splitter";
 import { findSmallTextRegions, unscaleBlocks, mergeEnhanced, ENHANCE_SCALE, type Region } from "./enhance";
 import type { OCRBlock, SegmentResult } from "./structure";
 import { detectFigures, dedupeFigures, type FigureBox } from "./figures";
+import type { OcrProvider } from "./ocr-config";
 
 const ANALYSIS_W = 360; // px width used to look for pictures
 
@@ -62,17 +63,19 @@ export async function cropFigures(file: Blob, boxes: FigureBox[]): Promise<Figur
 
 export const OCR_CONCURRENCY = 12;
 
-async function ocrOnce(blob: Blob, name: string): Promise<OCRBlock[] | null> {
+async function ocrOnce(blob: Blob, name: string, provider: OcrProvider): Promise<OCRBlock[] | null> {
   let lastError = "";
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < (provider === "google" ? 1 : 3); attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, 700 * attempt));
     try {
       const form = new FormData();
       form.append("file", blob, name);
-      const res = await fetch("/api/ocr", { method: "POST", body: form });
+      form.append("provider", provider);
+      const res = await fetch("/api/ocr", { method: "POST", body: form, signal: AbortSignal.timeout(55_000) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
         lastError = data.detail || `HTTP ${res.status}`;
+        if (res.status >= 400 && res.status < 500) break;
         continue;
       }
       return (data.blocks || []) as OCRBlock[];
@@ -96,6 +99,7 @@ export interface Progress {
 export async function recognize(
   segments: ClientSegment[],
   onProgress: (p: Progress) => void,
+  provider: OcrProvider = "tencent",
 ): Promise<{ results: SegmentResult[]; failed: number[]; figures: FigureBox[] }> {
   const found: FigureBox[] = [];
   const results: (SegmentResult | null)[] = segments.map(() => null);
@@ -133,7 +137,7 @@ export async function recognize(
   };
 
   const pump = () => {
-    while (active < OCR_CONCURRENCY && queue.length) {
+    while (active < (provider === "google" ? 2 : OCR_CONCURRENCY) && queue.length) {
       const task = queue.shift()!;
       active++;
       task().finally(() => {
@@ -148,7 +152,7 @@ export async function recognize(
     try {
       const s = segments[i];
       const crop = await cropAndScale(s.blob, region.y0, region.y1, ENHANCE_SCALE);
-      const enhanced = await ocrOnce(crop, `segment-${s.index}-zoom.jpg`);
+      const enhanced = await ocrOnce(crop, `segment-${s.index}-zoom.jpg`, provider);
       if (enhanced) blocksOf[i] = mergeEnhanced(blocksOf[i], unscaleBlocks(enhanced, region, ENHANCE_SCALE), region);
     } catch (e) {
       console.error("[OCR] enhance failed", e);
@@ -161,7 +165,7 @@ export async function recognize(
 
   segments.forEach((s, i) => {
     queue.push(async () => {
-      const blocks = await ocrOnce(s.blob, `segment-${s.index}.jpg`);
+      const blocks = await ocrOnce(s.blob, `segment-${s.index}.jpg`, provider);
       if (!blocks) failed.push(i + 1);
       blocksOf[i] = blocks || [];
       if (blocks) {
@@ -171,7 +175,8 @@ export async function recognize(
           console.error("[figures] detection failed", e);
         }
       }
-      const regions = blocks ? findSmallTextRegions(blocks, s.yEnd - s.yStart) : [];
+      // Tencent zoom merging compares confidences from the same engine only.
+      const regions = blocks && provider === "tencent" ? findSmallTextRegions(blocks, s.yEnd - s.yStart) : [];
       pendingZoom[i] = regions.length;
       enhancing += regions.length;
       // zoom passes go to the FRONT so a segment finishes soon after its first read

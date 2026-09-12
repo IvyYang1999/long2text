@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:ocr": "node --test tests/google-vision.test.mjs tests/ocr-integration.test.mjs",
     "test:seo": "node --test tests/seo.test.mjs",
     "test:conversion": "node --test tests/guide-entry.test.mjs tests/analytics.test.mjs",
     "test:seo:smoke": "node tests/seo-smoke.mjs",

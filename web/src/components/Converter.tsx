@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession, signIn } from "next-auth/react";
-import { splitImageInBrowser } from "@/lib/client-splitter";
+import { prepareOcr } from "@/lib/prepare-ocr";
 import { recognize, cropFigures, type Figure } from "@/lib/pipeline";
 import { structure, previewOf, textInside, type SegmentResult, type Scene, type DetectedScene, type Line, type FigureRef } from "@/lib/structure";
 import { withImageFiles, figureIds, toHtml, toStyledHtml, makeZip, applyMode, type OutputMode } from "@/lib/export";
@@ -314,13 +314,13 @@ export default function Converter({ locale, embedded = false }: { locale: Locale
       setLive({ finished: 0, total: 0, enhancing: 0, etaSec: null, markdown: "" });
       const t0 = Date.now();
       try {
-        const split = await splitImageInBrowser(file);
+        const split = await prepareOcr(file);
         setLive((l) => ({ ...l, total: split.segments.length }));
         setPhase("processing");
         const { results: segs, failed, figures: boxes } = await recognize(split.segments, (p) => {
           const preview = p.prefix.length ? structure(p.prefix, split.width, scene, labels).markdown : "";
           setLive({ finished: p.finished, total: p.total, enhancing: p.enhancing, etaSec: p.etaSec, markdown: preview });
-        });
+        }, split.provider);
         if (failed.length === split.segments.length) throw new Error(d.work.recognitionFailed);
 
         const pics: Pic[] = (await cropFigures(file, boxes)).map((f) => ({ ...f, ocrText: textInside(segs, f) }));
