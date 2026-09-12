@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "test:seo": "node --test tests/seo.test.mjs",
+    "test:conversion": "node --test tests/guide-entry.test.mjs tests/analytics.test.mjs",
     "test:seo:smoke": "node tests/seo-smoke.mjs",
     "dev": "next dev",
     "build": "next build",

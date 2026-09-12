@@ -2,9 +2,10 @@ import Link from "next/link";
 import { CONTACT_EMAIL, type Dict } from "@/lib/i18n";
 import SiteHeader from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/Landing";
+import AnalyticsPreference from "@/components/AnalyticsPreference";
 
 const CONTACT = CONTACT_EMAIL;
-const UPDATED = "2026-09-11";
+const UPDATED = "2026-09-12";
 
 type Section = { h: string; p: string[] };
 type Doc = { title: string; updated: string; sections: Section[]; contact: string };
@@ -19,7 +20,7 @@ const privacy: Record<"en" | "zh", Doc> = {
       { h: "AI proofreading", p: ["When AI proofread is on, a small number of lines the OCR engine was unsure about — together with a few nearby lines of text — are sent to SiliconFlow's model API to fix misreads. You can switch it off at any time; the setting is remembered in your browser.", "Pictures found in your screenshot (stickers, photos) are cut out in your browser. Only if you click “Describe them with AI” are those small crops sent to SiliconFlow's vision model to get a one-line description; the full screenshot is never sent."] },
       { h: "If you sign in", p: ["Google sign-in gives us your name, email address and profile picture, which we use only to link your purchases and history to you.", "Recognized text from images you convert while signed in is saved to our database so you can find it again in History."] },
       { h: "Payments", p: ["Payments are processed by Stripe. We receive a confirmation of the payment, never your card details."] },
-      { h: "Analytics and cookies", p: ["We use Google Analytics to count visits and clicks. It is disabled when your browser sends Do Not Track or Global Privacy Control, and it never receives the text of your screenshots.", "Cookies are used for your sign-in session, your language choice and analytics."] },
+      { h: "Analytics and cookies", p: ["Optional Google Analytics is off by default. You can enable it using the preference below and disable it here later. Do Not Track, Global Privacy Control and an existing refusal keep it off. We do not load Google Analytics before your opt-in.", "When enabled, it measures public-page visits, conversion starts and outcomes, exports, checkout starts and verified payment returns. It does not receive screenshot content, file names, account or payment identifiers, or URL query parameters. These statistics are incomplete when visitors opt out and are not our payment ledger.", "Necessary cookies support sign-in and language choice. Optional analytics cookies are used only after you enable analytics; your preference is stored locally in this browser."] },
     ],
   },
   zh: {
@@ -31,7 +32,7 @@ const privacy: Record<"en" | "zh", Doc> = {
       { h: "AI 校对", p: ["开启 AI 校对时，识别引擎没把握的少量文字行，连同附近几行文字，会发送给硅基流动（SiliconFlow）的模型接口用于修正错字。你可以随时关掉，这个设置保存在你的浏览器里。", "截图里的表情包、照片等配图在你的浏览器里被裁出来。只有你点击「让 AI 描述这些图片」时，这些小图才会发送给硅基流动的视觉模型生成一句描述；整张截图不会被发送。"] },
       { h: "如果你登录", p: ["通过 Google 登录时，我们会拿到你的名字、邮箱和头像，只用来把你的购买记录和历史记录关联到你。", "登录状态下转换的图片，识别出的文字会保存在我们的数据库里，方便你之后在「历史记录」里找回。"] },
       { h: "付款", p: ["付款由 Stripe 处理。我们只收到付款成功的确认，看不到你的卡号。"] },
-      { h: "统计与 Cookie", p: ["我们用 Google Analytics 统计访问和点击。浏览器开启「请勿追踪」或「全局隐私控制」时不会统计，截图里的文字也从不发送给它。", "Cookie 用于登录状态、语言选择和访问统计。"] },
+      { h: "统计与 Cookie", p: ["可选的 Google Analytics 默认关闭。你可以通过下方选项主动开启，之后也可以在这里关闭。「请勿追踪」、全局隐私控制和已有拒绝记录会使统计保持关闭；主动同意前不会加载 Google Analytics。", "开启后，仅统计公开页面访问、转换开始与结果、导出、发起结账和已核验的付款返回。不会发送截图正文、文件名、账号或付款标识，也不会发送网址查询参数。拒绝统计的访客不计入这些数据，因此它不是完整用户统计或财务账本。", "必要 Cookie 用于登录状态和语言选择。只有主动开启统计后才使用可选统计 Cookie；你的选择仅保存在当前浏览器。"] },
     ],
   },
 };
@@ -39,7 +40,7 @@ const privacy: Record<"en" | "zh", Doc> = {
 const terms: Record<"en" | "zh", Doc> = {
   en: {
     title: "Terms of service",
-    updated: `Last updated ${UPDATED}`,
+    updated: "Last updated 2026-09-11",
     contact: "Contact:",
     sections: [
       { h: "The service", p: ["Long2Text converts screenshots you provide into text. Recognition and AI proofreading can make mistakes; please check important results against the original image."] },
@@ -50,7 +51,7 @@ const terms: Record<"en" | "zh", Doc> = {
   },
   zh: {
     title: "服务条款",
-    updated: `最后更新：${UPDATED}`,
+    updated: "最后更新：2026-09-11",
     contact: "联系方式：",
     sections: [
       { h: "服务内容", p: ["Long2Text 把你提供的截图转换成文字。识别和 AI 校对都可能出错，重要内容请对照原图核对。"] },
@@ -83,6 +84,7 @@ export default function Legal({ d, kind }: { d: Dict; kind: "privacy" | "terms" 
               ))}
             </section>
           ))}
+          {kind === "privacy" && <AnalyticsPreference locale={d.locale} />}
           {CONTACT && (
             <p className="text-[15px] text-muted">
               {doc.contact}{" "}

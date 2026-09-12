@@ -1,11 +1,11 @@
-import Image from "next/image";
 import Link from "next/link";
 import SiteHeader from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/Landing";
 import { dicts } from "@/lib/i18n";
 import { SITE } from "@/lib/seo";
 import { seoGuides } from "@/lib/seo-guides";
-import cases from "@/lib/cases.json";
+import Converter from "@/components/Converter";
+import GuideExample from "@/components/GuideExample";
 
 type GuideKind = "chat" | "markdown";
 const content = {
@@ -54,8 +54,6 @@ const content = {
 export default function ConversionGuide({ kind }: { kind: GuideKind }) {
   const c = content[kind];
   const guide = seoGuides[c.index];
-  const example = cases[c.sample];
-  const excerpt = example.markdown.split("\n\n").slice(0, 5).join("\n\n");
   const breadcrumbs = {
     "@context": "https://schema.org", "@type": "BreadcrumbList",
     itemListElement: [
@@ -74,32 +72,15 @@ export default function ConversionGuide({ kind }: { kind: GuideKind }) {
         </nav>
         <h1 className="mt-7 max-w-3xl text-4xl font-bold tracking-tight text-ink sm:text-6xl">{c.heading}</h1>
         <p className="mt-5 max-w-2xl text-lg leading-relaxed text-muted">{c.intro}</p>
-        <div className="mt-7 flex flex-wrap items-center gap-5">
-          <Link href="/" className="inline-flex rounded-full bg-accent px-6 py-3 font-medium text-white transition-colors hover:bg-accent-hover">Open the converter →</Link>
-          <a href="#example" className="py-3 text-sm text-accent underline underline-offset-4">See a screenshot and its output</a>
-        </div>
+        <Converter locale="en" embedded />
+        <a href="#example" className="mt-4 inline-block py-2 text-sm text-accent underline underline-offset-4">See a screenshot and its output</a>
         <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted">Free for images under 500 characters; longer results include a free 30% preview. <Link href="/#pricing" className="underline underline-offset-4">See current pricing</Link>.</p>
 
         <section className="mt-16 max-w-3xl border-t border-line pt-10">
           <h2 className="text-2xl font-semibold tracking-tight text-ink">{c.purpose}</h2>
           <p className="mt-4 leading-relaxed text-muted">{c.purposeText}</p>
         </section>
-        <section id="example" className="mt-14 scroll-mt-24">
-          <h2 className="text-2xl font-semibold tracking-tight text-ink">A public demo, not a perfect transcript</h2>
-          <p className="mt-3 max-w-3xl leading-relaxed text-muted">This is an unedited excerpt of recorded OCR output from our demo screenshot. Misreads and imperfect line breaks are left visible so you can see what needs checking.</p>
-          <div className="mt-6 grid min-w-0 gap-6 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
-            <figure className="min-w-0">
-              <div role="region" aria-label="Scrollable source screenshot" tabIndex={0} className="h-80 overflow-y-auto rounded-xl border border-line focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent">
-                <Image src={`/samples/${c.sample}.jpg`} alt={`${kind === "chat" ? "Chat conversation" : "Article"} demo screenshot used for the OCR excerpt`} width={example.width} height={example.height} sizes="(max-width: 640px) 100vw, 360px" className="h-auto w-full" />
-              </div>
-              <figcaption className="mt-3 text-sm text-muted">{example.width} × {example.height.toLocaleString("en-US")} pixels · <a href={`/samples/${c.sample}.jpg`} className="text-accent underline underline-offset-4">Open full source image</a></figcaption>
-            </figure>
-            <div className="min-w-0">
-              <pre className="min-h-80 whitespace-pre-wrap break-words rounded-xl border border-line bg-wash p-5 font-mono text-sm leading-relaxed text-ink"><code>{excerpt}</code></pre>
-              <p className="mt-3 text-sm text-muted">Markdown source · excerpt, not the complete result</p>
-            </div>
-          </div>
-        </section>
+        <GuideExample id={c.sample} />
         <section className="mt-14 max-w-3xl">
           <h2 className="text-2xl font-semibold tracking-tight text-ink">How to convert your screenshot</h2>
           <ol className="mt-6 space-y-7">

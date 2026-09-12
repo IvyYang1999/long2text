@@ -11,6 +11,7 @@ import { pickCandidates, runCorrections, markCorrections, changedSpan, type Corr
 import { FREE_CHARS, PREVIEW_PERCENT, dicts, type Locale } from "@/lib/i18n";
 import MarkdownView from "@/components/MarkdownView";
 import CaseShowcase from "@/components/CaseShowcase";
+import { trackFunnel } from "@/lib/analytics";
 import {
   IconUpload,
   IconLock,
@@ -107,7 +108,7 @@ function rebuild(r: Result, labels: Labels): Result {
 
 
 
-export default function Converter({ locale }: { locale: Locale }) {
+export default function Converter({ locale, embedded = false }: { locale: Locale; embedded?: boolean }) {
   const d = dicts[locale];
   const { data: session } = useSession();
   const labels: Labels = { me: d.work.me, other: d.work.them, image: d.work.image, voice: d.work.voice };
@@ -132,6 +133,7 @@ export default function Converter({ locale }: { locale: Locale }) {
   const resultsRef = useRef<Result[]>([]);
   const aiAbort = useRef(new Map<string, AbortController>());
   const phaseRef = useRef<Phase>("idle");
+  const verifiedPayments = useRef(new Set<string>());
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
@@ -202,6 +204,10 @@ export default function Converter({ locale }: { locale: Locale }) {
           const v = await fetch(`/api/verify-payment?ocrResultId=${paidId}`).then((r) => r.json());
           paid = !!v.paid;
           if (!paid) await new Promise((r) => setTimeout(r, 1500));
+        }
+        if (paid && !verifiedPayments.current.has(paidId)) {
+          verifiedPayments.current.add(paidId);
+          trackFunnel("payment_verified");
         }
         const all = await fetch("/api/ocr-results").then((r) => r.json());
         const row = Array.isArray(all) ? all.find((x: { id: string }) => x.id === paidId) : null;
@@ -300,6 +306,8 @@ export default function Converter({ locale }: { locale: Locale }) {
         return;
       }
       const url = URL.createObjectURL(file);
+      phaseRef.current = "splitting";
+      trackFunnel("upload_started");
       setPendingUrl(url);
       setError("");
       setPhase("splitting");
@@ -360,8 +368,10 @@ export default function Converter({ locale }: { locale: Locale }) {
         setActive(next.length - 1);
         setPhase("done");
         setPendingUrl(null);
+        trackFunnel(failed.length ? "ocr_partial" : "ocr_completed");
         if (willProofread) startAi(r, final.lines);
       } catch (e) {
+        trackFunnel("ocr_failed");
         setError(e instanceof Error ? e.message : d.work.recognitionFailed);
         setPhase(resultsRef.current.length ? "done" : "error");
         setPendingUrl(null);
@@ -520,14 +530,16 @@ export default function Converter({ locale }: { locale: Locale }) {
       await navigator.clipboard.writeText(plain);
     }
     setCopied(true);
+    trackFunnel("export_completed", "copy");
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const save = (blob: Blob, name: string) => {
+  const save = (blob: Blob, name: string, method: "markdown" | "html" | "markdown_zip") => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = name;
     a.click();
+    trackFunnel("export_completed", method);
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     if (result) mutate(result.rid, (x) => ({ ...x, isDownloaded: true }));
   };
@@ -536,11 +548,11 @@ export default function Converter({ locale }: { locale: Locale }) {
   // Download: text → .md; with pictures → a typeset, self-contained HTML page
   const download = async () => {
     if (!result) return;
-    if (!visibleFigs.length) return save(new Blob([visible], { type: "text/markdown;charset=utf-8" }), `${baseName()}.md`);
+    if (!visibleFigs.length) return save(new Blob([visible], { type: "text/markdown;charset=utf-8" }), `${baseName()}.md`, "markdown");
     const pics = result.figures.filter((f) => visibleFigs.includes(f.id));
     const urls = Object.fromEntries(await Promise.all(pics.map(async (f) => [f.id, await toDataUrl(f.blob)] as const)));
     const html = toStyledHtml({ title: baseName(), md: visible, chat: result.scene === "chat", me: d.work.me, src: (id) => urls[id], lang: d.htmlLang });
-    save(new Blob([html], { type: "text/html;charset=utf-8" }), `${baseName()}.html`);
+    save(new Blob([html], { type: "text/html;charset=utf-8" }), `${baseName()}.html`, "html");
   };
 
   // …or Markdown + an images/ folder
@@ -549,7 +561,7 @@ export default function Converter({ locale }: { locale: Locale }) {
     const pics = result.figures.filter((f) => visibleFigs.includes(f.id));
     const files = [{ name: `${baseName()}.md`, data: new TextEncoder().encode(withImageFiles(visible)) }];
     for (const f of pics) files.push({ name: `images/${f.id}.jpg`, data: new Uint8Array(await f.blob.arrayBuffer()) });
-    save(makeZip(files), `${baseName()}.zip`);
+    save(makeZip(files), `${baseName()}.zip`, "markdown_zip");
   };
 
   // One-line AI descriptions for the pictures (only on request: sends the crops)
@@ -613,7 +625,10 @@ export default function Converter({ locale }: { locale: Locale }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `Checkout failed: ${res.status}`);
-      if (data.url) window.location.href = data.url;
+      if (data.url) {
+        trackFunnel("begin_checkout");
+        window.location.href = data.url;
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Payment failed");
     }
@@ -635,6 +650,7 @@ export default function Converter({ locale }: { locale: Locale }) {
       ref={fileInput}
       type="file"
       accept="image/*"
+      aria-label={d.upload.button}
       className="hidden"
       onChange={(e) => {
         const f = e.target.files?.[0];
@@ -654,6 +670,21 @@ export default function Converter({ locale }: { locale: Locale }) {
 
   // ────────────────────────── idle: the hero ──────────────────────────
   if (phase === "idle" || (phase === "error" && results.length === 0)) {
+    if (embedded) {
+      return (
+        <section aria-label="Screenshot converter" className="mt-7 rounded-3xl border border-line bg-wash p-5 sm:p-7">
+          {input}{dropOverlay}
+          <div className="flex flex-wrap items-center gap-5">
+            <button onClick={pick} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-accent px-6 py-3 font-medium text-white transition-colors hover:bg-accent-hover">
+              <IconUpload className="h-5 w-5" />{d.upload.button}
+            </button>
+            <p className="text-sm text-muted">Drop an image here, or paste with <kbd className="whitespace-nowrap rounded border border-line bg-white px-1.5 py-0.5 font-mono text-xs">{pasteKey}</kbd></p>
+          </div>
+          <p className="mt-4 text-sm text-muted">PNG, JPG or WebP · No account needed to try</p>
+          <p role="status" className="mt-2 text-sm text-red-700">{error}</p>
+        </section>
+      );
+    }
     return (
       <section className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-12 px-5 pb-16 pt-10 sm:pt-16 lg:grid-cols-[1.05fr_1fr] lg:gap-8 lg:pb-24">
         {input}
